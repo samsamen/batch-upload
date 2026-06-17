@@ -1,0 +1,56 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  /* Cold navy palette */
+  --bg:    #0E0F14;
+  --s1:    #141520;
+  --s2:    #1A1C2C;
+  --b1:    #222438;
+  --b2:    #2E3052;
+  --t1:    #CDD4EC;
+  --t2:    #5A6090;
+  --t3:    #2E3258;
+
+  /* Signals — warm gold is the ONLY warm color */
+  --gold:  #E8B84B;
+  --green: #38D98A;
+  --red:   #EF5050;
+
+  /* Type */
+  --sans: 'Plus Jakarta Sans', system-ui, sans-serif;
+  --mono: 'Fira Code', 'Consolas', monospace;
+}
+
+html, body, #root {
+  height: 100%;
+  background: var(--bg);
+  color: var(--t1);
+  font-family: var(--sans);
+  font-size: 13px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+a { color: inherit; text-decoration: none; }
+button { font-family: var(--sans); cursor: pointer; border: none; outline: none; }
+
+input, textarea, select {
+  font-family: var(--sans);
+  font-size: 13px;
+  background: var(--s2);
+  border: 1px solid var(--b2);
+  border-radius: 4px;
+  color: var(--t1);
+  padding: 8px 11px;
+  outline: none;
+  transition: border-color 0.12s;
+  width: 100%;
+}
+input:focus, textarea:focus, select:focus { border-color: var(--gold); }
+input::placeholder, textarea::placeholder { color: var(--t3); }
+select option { background: var(--s2); }
+
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--b2); border-radius: 2px; }
