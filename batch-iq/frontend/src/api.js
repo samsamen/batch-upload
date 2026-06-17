@@ -1,4 +1,5 @@
-const BASE = import.meta.env.VITE_API_URL || 'http://localhost:8080';
+// Relative URL — werkt zowel lokaal als op Railway (zelfde server)
+const BASE = import.meta.env.VITE_API_URL || '';
 
 async function request(method, path, body) {
   const res = await fetch(`${BASE}${path}`, {
@@ -23,9 +24,10 @@ export const api = {
   delete: (path)        => request('DELETE', path),
 };
 
-// Auth: start OAuth flow (redirect to backend → Shopify)
+// Auth: start OAuth flow
 export function startShopifyOAuth(shopDomain) {
-  window.location.href = `${BASE}/api/shopify/auth?shop=${encodeURIComponent(shopDomain)}`;
+  const base = import.meta.env.VITE_API_URL || window.location.origin;
+  window.location.href = `${base}/api/shopify/auth?shop=${encodeURIComponent(shopDomain)}`;
 }
 
 // Format helpers
