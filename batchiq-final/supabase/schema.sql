@@ -70,3 +70,16 @@ CREATE TABLE IF NOT EXISTS biq_sync_logs (
   status        TEXT DEFAULT 'running',  -- running / success / error
   error_message TEXT
 );
+
+-- App config — Shopify keys stored here instead of Railway env vars
+CREATE TABLE IF NOT EXISTS biq_config (
+  id                    INTEGER PRIMARY KEY DEFAULT 1,
+  shopify_client_id     TEXT,
+  shopify_client_secret TEXT,
+  app_url               TEXT,   -- this app's own URL (for OAuth redirect)
+  updated_at            TIMESTAMPTZ DEFAULT NOW(),
+  CONSTRAINT single_row CHECK (id = 1)
+);
+
+-- Seed the single config row
+INSERT INTO biq_config (id) VALUES (1) ON CONFLICT (id) DO NOTHING;

@@ -82,6 +82,12 @@ export default function Stores() {
   const [successMsg, setSuccessMsg]   = useState(null);
   const [searchParams]                = useSearchParams();
 
+  // Shopify keys config (stored in Supabase)
+  const [cfg, setCfg]                 = useState({ shopify_client_id: '', app_url: '', has_secret: false });
+  const [cfgForm, setCfgForm]         = useState({ shopify_client_id: '', shopify_client_secret: '', app_url: '' });
+  const [savingCfg, setSavingCfg]     = useState(false);
+  const [cfgSaved, setCfgSaved]       = useState(false);
+
   useEffect(() => {
     const connected = searchParams.get('connected');
     if (connected) {
@@ -89,7 +95,32 @@ export default function Stores() {
       window.history.replaceState({}, '', '/stores');
     }
     load();
+    loadConfig();
   }, []);
+
+  async function loadConfig() {
+    try {
+      const data = await api.get('/api/config');
+      setCfg(data);
+      setCfgForm({
+        shopify_client_id: data.shopify_client_id || '',
+        shopify_client_secret: '',
+        app_url: data.app_url || window.location.origin,
+      });
+    } catch (err) { /* config table may not exist yet */ }
+  }
+
+  async function saveConfig() {
+    setSavingCfg(true);
+    setError(null);
+    try {
+      await api.patch('/api/config', cfgForm);
+      setCfgSaved(true);
+      setTimeout(() => setCfgSaved(false), 2500);
+      await loadConfig();
+    } catch (err) { setError(err.message); }
+    finally { setSavingCfg(false); }
+  }
 
   async function load() {
     try { setLoading(true); setStores(await api.get('/api/stores')); }
@@ -148,35 +179,63 @@ export default function Stores() {
           </div>
         )}
 
-        {/* Setup block */}
+        {/* Shopify keys — stored in Supabase */}
         <div style={{
           background: 'var(--s1)', border: '1px solid var(--b1)',
           borderRadius: 5, padding: 20,
         }}>
-          <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--t1)', marginBottom: 16 }}>
-            One-time Shopify Partners setup
+          <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--t1)', marginBottom: 4 }}>
+            Shopify app keys
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--t2)', marginBottom: 16 }}>
+            Create a Custom App at partners.shopify.com, then paste the keys here. Stored securely in your database.
           </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <SetupStep n={1} text="Go to partners.shopify.com and create a Custom App." />
-            <SetupStep n={2} text="Set the App URL:">
-              <CopyField value={API_URL} />
-            </SetupStep>
-            <SetupStep n={3} text="Set the Redirect URL:">
-              <CopyField value={`${API_URL}/api/shopify/callback`} />
-            </SetupStep>
-            <SetupStep n={4} text="Required scopes:" />
-            <div style={{ marginLeft: 28 }}>
-              <code style={{
-                fontFamily: 'var(--mono)', fontSize: 11,
-                color: 'var(--gold)', letterSpacing: '0.02em',
-              }}>
+          {/* The URLs to paste into Shopify Partners */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 18 }}>
+            <div>
+              <Label>App URL — paste this into your Shopify app</Label>
+              <CopyField value={cfgForm.app_url || window.location.origin} />
+            </div>
+            <div>
+              <Label>Redirect URL — paste this into your Shopify app</Label>
+              <CopyField value={`${cfgForm.app_url || window.location.origin}/api/shopify/callback`} />
+            </div>
+            <div>
+              <Label>Required scopes</Label>
+              <code style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--gold)' }}>
                 read_orders, read_products
               </code>
             </div>
-            <SetupStep n={5} text="Copy Client ID and Client Secret into Railway environment variables:" />
-            <div style={{ marginLeft: 28 }}>
-              <CopyField value="SHOPIFY_CLIENT_ID=... SHOPIFY_CLIENT_SECRET=..." />
+          </div>
+
+          <div style={{ height: 1, background: 'var(--b1)', margin: '4px 0 18px' }} />
+
+          {/* The keys to enter */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div>
+              <Label>Client ID</Label>
+              <input
+                placeholder="paste Client ID from Shopify"
+                value={cfgForm.shopify_client_id}
+                onChange={e => setCfgForm(f => ({ ...f, shopify_client_id: e.target.value }))}
+                style={{ fontFamily: 'var(--mono)', fontSize: 12 }}
+              />
+            </div>
+            <div>
+              <Label>Client Secret {cfg.has_secret && '(saved — leave blank to keep)'}</Label>
+              <input
+                type="password"
+                placeholder={cfg.has_secret ? '••••••••••••' : 'paste Client Secret from Shopify'}
+                value={cfgForm.shopify_client_secret}
+                onChange={e => setCfgForm(f => ({ ...f, shopify_client_secret: e.target.value }))}
+                style={{ fontFamily: 'var(--mono)', fontSize: 12 }}
+              />
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 4 }}>
+              <Btn onClick={saveConfig} disabled={savingCfg} variant="primary">
+                {savingCfg ? 'Saving…' : cfgSaved ? 'Saved' : 'Save keys'}
+              </Btn>
             </div>
           </div>
         </div>

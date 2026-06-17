@@ -29,7 +29,6 @@ export function startShopifyOAuth(shopDomain) {
   const base = import.meta.env.VITE_API_URL || window.location.origin;
   window.location.href = `${base}/api/shopify/auth?shop=${encodeURIComponent(shopDomain)}`;
 }
-
 // Format helpers
 export function fmtCurrency(amount, currency = 'EUR') {
   return new Intl.NumberFormat('en-EU', {
