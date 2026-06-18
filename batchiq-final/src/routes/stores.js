@@ -19,7 +19,6 @@ router.get('/', async (req, res) => {
 
 // POST /api/stores/connect — add a store using client credentials (no login)
 // Body: { shop_domain, name?, feed_language?, client_id?, client_secret? }
-// If client_id/secret omitted, uses the saved config (biq_config).
 router.post('/connect', async (req, res) => {
   let { shop_domain, name, feed_language, client_id, client_secret } = req.body;
 
@@ -30,7 +29,6 @@ router.post('/connect', async (req, res) => {
     return res.status(400).json({ error: 'Store URL must end in .myshopify.com' });
   }
 
-  // Use provided keys, else fall back to saved config
   const cfg = await getConfig();
   const useClientId = client_id || cfg.shopify_client_id;
   const useSecret = client_secret || cfg.shopify_client_secret;
@@ -39,7 +37,6 @@ router.post('/connect', async (req, res) => {
     return res.status(400).json({ error: 'No Shopify credentials. Enter Client ID and Secret.' });
   }
 
-  // If new keys were provided, save them to config for reuse
   if (client_id || client_secret) {
     await supabase.from('biq_config').update({
       shopify_client_id: useClientId,
@@ -48,7 +45,6 @@ router.post('/connect', async (req, res) => {
     }).eq('id', 1);
   }
 
-  // Verify by fetching an access token via client credentials grant
   let accessToken;
   try {
     accessToken = await getAccessToken(shop_domain, useClientId, useSecret);

@@ -121,8 +121,8 @@ function ConnectModal({ onClose, onConnected, savedConfig }) {
 
             {error && (
               <div style={{
-                background: 'rgba(239,80,80,0.08)', border: '1px solid rgba(239,80,80,0.25)',
-                borderRadius: 5, padding: '8px 12px', marginBottom: 14, fontSize: 12, color: 'var(--red)',
+                background: 'var(--red-bg)', border: '1px solid var(--red)',
+                borderRadius: 7, padding: '9px 12px', marginBottom: 14, fontSize: 12, color: 'var(--red)', fontWeight: 600,
               }}>
                 {error}
               </div>
@@ -246,6 +246,58 @@ function Step({ children }) {
   return <li style={{ fontSize: 11, color: 'var(--t2)', lineHeight: 1.6, paddingLeft: 4 }}>{children}</li>;
 }
 
+// ── Edit Store Modal ──────────────────────────────────────────────────────────
+function EditStoreModal({ store, onClose, onSaved }) {
+  const [form, setForm] = useState({
+    name: store.name || '',
+    currency: store.currency || 'EUR',
+    markets: (store.markets || []).join(', '),
+  });
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const set = (k) => (e) => setForm(f => ({ ...f, [k]: e.target.value }));
+
+  async function save() {
+    if (!form.name.trim()) { setError('Name is required.'); return; }
+    setLoading(true); setError(null);
+    try {
+      const markets = form.markets.split(',').map(m => m.trim().toUpperCase()).filter(Boolean);
+      const updated = await api.patch(`/api/stores/${store.id}`, {
+        name: form.name.trim(), currency: form.currency.trim() || 'EUR', markets,
+      });
+      onSaved(updated); onClose();
+    } catch (err) { setError(err.message); } finally { setLoading(false); }
+  }
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,20,35,0.5)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 20 }}>
+      <div style={{ background: 'var(--s1)', border: '1px solid var(--b2)', borderRadius: 14, width: 460, padding: 26, boxShadow: 'var(--sh-xl)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+          <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--t1)' }}>Edit store</div>
+          <button onClick={onClose} style={{ width: 30, height: 30, borderRadius: 8, color: 'var(--t3)', background: 'var(--s2)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>✕</button>
+        </div>
+
+        {error && <div style={{ background: 'var(--red-bg)', border: '1px solid var(--red)', borderRadius: 9, padding: '9px 13px', marginBottom: 14, fontSize: 12.5, color: 'var(--red)', fontWeight: 600 }}>{error}</div>}
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div style={{ fontSize: 11, color: 'var(--t3)', fontFamily: "'Fira Code', monospace" }}>{store.shop_domain}</div>
+          <div><Label>Store name</Label><input value={form.name} onChange={set('name')} /></div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div><Label>Currency</Label><input value={form.currency} onChange={set('currency')} style={{ fontFamily: "'Fira Code', monospace" }} /></div>
+            <div><Label>Markets</Label><input placeholder="FI, SE" value={form.markets} onChange={set('markets')} style={{ fontFamily: "'Fira Code', monospace" }} /></div>
+          </div>
+          <div style={{ fontSize: 10.5, color: 'var(--t3)' }}>Markets are country codes, comma-separated (e.g. FI, SE, NO). Used to warn about overlap between stores.</div>
+        </div>
+
+        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 22 }}>
+          <Btn onClick={onClose} variant="ghost">Cancel</Btn>
+          <Btn onClick={save} disabled={loading} variant="primary">{loading ? 'Saving…' : 'Save changes'}</Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Stores Page ───────────────────────────────────────────────────────────────
 export default function Stores() {
   const [stores, setStores]       = useState([]);
@@ -254,6 +306,8 @@ export default function Stores() {
   const [successMsg, setSuccess]  = useState(null);
   const [showConnect, setConnect] = useState(false);
   const [config, setConfig]       = useState({ shopify_client_id: '', has_secret: false });
+  const [syncingId, setSyncingId] = useState(null);
+  const [editStore, setEditStore] = useState(null);
   const [searchParams]            = useSearchParams();
 
   useEffect(() => {
@@ -276,10 +330,25 @@ export default function Stores() {
     load();
   }
 
+  async function syncStore(id, name) {
+    setSyncingId(id);
+    setError(null);
+    try {
+      const r = await api.post(`/api/sync/store/${id}`, { days: 30 });
+      const errs = r.errors?.length ? ` (${r.errors.length} error${r.errors.length > 1 ? 's' : ''})` : '';
+      setSuccess(`${name}: synced ${r.synced} day(s)${errs}. Check Activity for detail.`);
+    } catch (err) { setError(err.message); } finally { setSyncingId(null); }
+  }
+
   async function disconnect(id, name) {
     if (!confirm(`Disconnect ${name}?`)) return;
     try { await api.delete(`/api/stores/${id}`); setStores(p => p.filter(s => s.id !== id)); }
     catch (err) { setError(err.message); }
+  }
+
+  function onStoreSaved(updated) {
+    setStores(p => p.map(s => s.id === updated.id ? { ...s, ...updated } : s));
+    setSuccess(`${updated.name} updated.`);
   }
 
   // Detect markets covered by more than one store
@@ -384,12 +453,27 @@ export default function Stores() {
                     <td style={{ padding: '11px 20px', fontSize: 12, color: 'var(--t2)' }}>{s.currency || 'EUR'}</td>
                     <td style={{ padding: '11px 20px', fontSize: 11, color: 'var(--t2)', fontFamily: "'Fira Code', monospace" }}>{fmtDate(s.connected_at)}</td>
                     <td style={{ padding: '11px 20px', textAlign: 'right' }}>
-                      <button onClick={() => disconnect(s.id, s.name)}
-                        style={{ fontFamily: "'Fira Code', monospace", fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--t3)', background: 'none', border: '1px solid var(--b1)', borderRadius: 3, padding: '3px 9px', cursor: 'pointer', transition: 'all 0.1s' }}
-                        onMouseEnter={e => { e.target.style.color = 'var(--red)'; e.target.style.borderColor = 'rgba(239,80,80,0.3)'; }}
-                        onMouseLeave={e => { e.target.style.color = 'var(--t3)'; e.target.style.borderColor = 'var(--b1)'; }}>
-                        Disconnect
-                      </button>
+                      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                        <button onClick={() => syncStore(s.id, s.name)} disabled={syncingId === s.id}
+                          style={{ fontSize: 12, fontWeight: 700, color: '#fff', background: 'linear-gradient(135deg, #818CF8, #6366F1)', border: 'none', borderRadius: 8, padding: '7px 14px', cursor: 'pointer', boxShadow: 'var(--sh-brand)', opacity: syncingId === s.id ? 0.7 : 1, transition: 'transform 0.1s', display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                          onMouseEnter={e => { if (syncingId !== s.id) e.currentTarget.style.transform = 'translateY(-1px)'; }}
+                          onMouseLeave={e => e.currentTarget.style.transform = 'translateY(0)'}>
+                          {syncingId === s.id && <span style={{ width: 12, height: 12, borderRadius: '50%', border: '2px solid #fff', borderTopColor: 'transparent', animation: 'spin 0.6s linear infinite', display: 'inline-block' }} />}
+                          {syncingId === s.id ? 'Syncing…' : 'Sync'}
+                        </button>
+                        <button onClick={() => setEditStore(s)}
+                          style={{ fontSize: 12, fontWeight: 600, color: 'var(--t1)', background: 'var(--s1)', border: '1px solid var(--b2)', borderRadius: 8, padding: '7px 14px', cursor: 'pointer', transition: 'all 0.12s' }}
+                          onMouseEnter={e => { e.currentTarget.style.background = 'var(--s3)'; }}
+                          onMouseLeave={e => { e.currentTarget.style.background = 'var(--s1)'; }}>
+                          Edit
+                        </button>
+                        <button onClick={() => disconnect(s.id, s.name)}
+                          style={{ fontSize: 12, fontWeight: 600, color: 'var(--t1)', background: 'var(--s1)', border: '1px solid var(--b2)', borderRadius: 8, padding: '7px 14px', cursor: 'pointer', transition: 'all 0.12s' }}
+                          onMouseEnter={e => { e.currentTarget.style.color = 'var(--red)'; e.currentTarget.style.borderColor = 'var(--red)'; e.currentTarget.style.background = 'var(--red-bg)'; }}
+                          onMouseLeave={e => { e.currentTarget.style.color = 'var(--t1)'; e.currentTarget.style.borderColor = 'var(--b2)'; e.currentTarget.style.background = 'var(--s1)'; }}>
+                          Disconnect
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -404,6 +488,13 @@ export default function Stores() {
           onClose={() => setConnect(false)}
           onConnected={onConnected}
           savedConfig={config}
+        />
+      )}
+      {editStore && (
+        <EditStoreModal
+          store={editStore}
+          onClose={() => setEditStore(null)}
+          onSaved={onStoreSaved}
         />
       )}
     </div>
