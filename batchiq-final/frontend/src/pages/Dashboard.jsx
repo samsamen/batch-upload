@@ -18,7 +18,17 @@ function Label({ children }) {
   return <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>{children}</div>;
 }
 
-function Btn({ children, onClick, disabled, variant = 'ghost', size = 'md' }) {
+function Spinner({ size = 14, color = 'currentColor' }) {
+  return (
+    <span style={{
+      width: size, height: size, borderRadius: '50%', display: 'inline-block',
+      border: `2px solid ${color}`, borderTopColor: 'transparent',
+      animation: 'spin 0.6s linear infinite', flexShrink: 0,
+    }} />
+  );
+}
+
+function Btn({ children, onClick, disabled, variant = 'ghost', size = 'md', loading }) {
   const variants = {
     primary: { background: 'linear-gradient(135deg, #818CF8, #6366F1)', color: '#fff', border: 'none', boxShadow: 'var(--sh-brand)', fontWeight: 700 },
     ghost:   { background: 'var(--s1)', color: 'var(--t1)', border: '1px solid var(--b2)', fontWeight: 600 },
@@ -27,13 +37,14 @@ function Btn({ children, onClick, disabled, variant = 'ghost', size = 'md' }) {
   };
   const sizes = { md: { padding: '9px 16px', fontSize: 13 }, sm: { padding: '6px 12px', fontSize: 12 } };
   return (
-    <button onClick={onClick} disabled={disabled} style={{
-      borderRadius: 9, cursor: disabled ? 'not-allowed' : 'pointer', opacity: disabled ? 0.5 : 1,
+    <button onClick={onClick} disabled={disabled || loading} style={{
+      borderRadius: 9, cursor: (disabled || loading) ? 'not-allowed' : 'pointer', opacity: (disabled || loading) ? 0.7 : 1,
       transition: 'transform 0.1s, box-shadow 0.15s, background 0.15s', display: 'inline-flex', alignItems: 'center', gap: 7,
       ...variants[variant], ...sizes[size],
     }}
-      onMouseEnter={e => { if (!disabled) e.currentTarget.style.transform = 'translateY(-1px)'; }}
+      onMouseEnter={e => { if (!disabled && !loading) e.currentTarget.style.transform = 'translateY(-1px)'; }}
       onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; }}>
+      {loading && <Spinner size={size === 'sm' ? 12 : 14} />}
       {children}
     </button>
   );
@@ -356,7 +367,7 @@ function BatchRow({ batch, rank, maxRevenue, selected, onSelect, onAction, expan
                 {batch.source && <Pill label="Source" value={batch.source} />}
               </div>
               <div style={{ display: 'flex', gap: 8 }}>
-                <Btn onClick={() => onSync(batch)} disabled={syncing} variant="primary" size="sm">{syncing ? 'Syncing…' : 'Sync now'}</Btn>
+                <Btn onClick={() => onSync(batch)} loading={syncing} variant="primary" size="sm">{syncing ? 'Syncing…' : 'Sync now'}</Btn>
                 <Btn onClick={() => onAction('edit')} variant="ghost" size="sm">Edit</Btn>
               </div>
             </div>
@@ -530,7 +541,7 @@ export default function Dashboard() {
             <p style={{ fontSize: 13, color: 'var(--t2)', marginTop: 3 }}>Ranked product groups across all your stores.</p>
           </div>
           <div style={{ display: 'flex', gap: 9 }}>
-            <Btn onClick={handleSync} disabled={syncing} variant="ghost">{syncing ? 'Syncing…' : 'Sync'}</Btn>
+            <Btn onClick={handleSync} loading={syncing} variant="ghost">{syncing ? 'Syncing…' : 'Sync all'}</Btn>
             <Btn onClick={() => setShowCreate(true)} variant="primary">
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 2.5v9M2.5 7h9" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
               New Batch
@@ -574,6 +585,17 @@ export default function Dashboard() {
       </div>
 
       {error && <div style={{ margin: '0 32px 16px', background: 'var(--red-bg)', border: '1px solid var(--red)', borderRadius: 9, padding: '11px 15px', fontSize: 12.5, color: 'var(--red)', fontWeight: 600 }}>{error}</div>}
+
+      {/* Sync in progress banner */}
+      {(syncing || syncingId) && (
+        <div style={{ margin: '0 32px 16px', background: 'var(--brand-l)', border: '1px solid var(--brand)', borderRadius: 11, padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12, animation: 'fadeIn 0.15s ease' }}>
+          <Spinner size={16} color="var(--brand)" />
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--brand)' }}>Syncing with Shopify…</div>
+            <div style={{ fontSize: 11.5, color: 'var(--t2)', marginTop: 1 }}>Fetching products and orders. This can take a moment — watch the Activity tab for live detail.</div>
+          </div>
+        </div>
+      )}
 
       {/* Bulk action bar */}
       {selected.size > 0 && (

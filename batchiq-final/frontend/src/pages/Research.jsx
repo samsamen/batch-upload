@@ -197,7 +197,7 @@ export default function Research() {
       <div style={{ padding: '26px 32px 0' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 22 }}>
           <div>
-            <h1 style={{ fontSize: 24, fontWeight: 800, color: 'var(--t1)', letterSpacing: '-0.025em' }}>Research</h1>
+            <h1 style={{ fontSize: 24, fontWeight: 800, color: 'var(--t1)', letterSpacing: '-0.025em' }}>Research Ideas</h1>
             <p style={{ fontSize: 13, color: 'var(--t2)', marginTop: 3 }}>Brainstorm ideas, drag them across stages, keep them for the future.</p>
           </div>
           <Btn onClick={() => setModalIdea(null)} variant="primary">

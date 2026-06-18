@@ -12,15 +12,16 @@ async function syncBatchStore(batchStore, fromDate, toDate) {
   const store = batchStore.biq_stores;
   const { id: bsId } = batchStore;
 
-  // KEY FIX: use the store sub-tag if set, otherwise fall back to the batch's parent tag
+  // KEY FIX: tag priority is sub-tag → batch_tag → batch NAME (the name IS the tag on the products)
   const effectiveTag = (batchStore.shopify_tag && batchStore.shopify_tag.trim())
     || (batchStore.biq_batches && batchStore.biq_batches.batch_tag)
+    || (batchStore.biq_batches && batchStore.biq_batches.name)
     || null;
 
   const storeName = store?.name || store?.shop_domain || 'store';
 
   if (!effectiveTag) {
-    await logActivity('sync', 'warning', `${storeName}: no tag set on batch or store — skipped`, { batch_store_id: bsId });
+    await logActivity('sync', 'warning', `${storeName}: batch has no name or tag — cannot find products`, { batch_store_id: bsId });
     return { days: 0, products: 0 };
   }
 
@@ -103,7 +104,7 @@ async function syncAll(days = 1) {
     .select(`
       id, shopify_tag,
       biq_stores ( id, shop_domain, name, access_token, active ),
-      biq_batches ( status, batch_tag )
+      biq_batches ( status, batch_tag, name )
     `);
 
   if (error) {
@@ -149,7 +150,7 @@ router.post('/store/:storeId', async (req, res) => {
 
   const { data: batchStores, error } = await supabase
     .from('biq_batch_stores')
-    .select(`id, shopify_tag, biq_stores ( id, shop_domain, name, access_token, active ), biq_batches ( status, batch_tag )`)
+    .select(`id, shopify_tag, biq_stores ( id, shop_domain, name, access_token, active ), biq_batches ( status, batch_tag, name )`)
     .eq('store_id', req.params.storeId);
 
   if (error) return res.status(500).json({ error: error.message });
@@ -173,7 +174,7 @@ router.post('/batch/:batchId', async (req, res) => {
 
   const { data: batchStores, error } = await supabase
     .from('biq_batch_stores')
-    .select(`id, shopify_tag, biq_stores ( id, shop_domain, name, access_token, active ), biq_batches ( status, batch_tag )`)
+    .select(`id, shopify_tag, biq_stores ( id, shop_domain, name, access_token, active ), biq_batches ( status, batch_tag, name )`)
     .eq('batch_id', req.params.batchId);
 
   if (error) return res.status(500).json({ error: error.message });

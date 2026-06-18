@@ -495,11 +495,15 @@ export default function BatchDetail() {
                             background: 'linear-gradient(135deg, #818CF8, #6366F1)',
                             border: 'none', borderRadius: 8, padding: '7px 14px',
                             cursor: 'pointer', boxShadow: 'var(--sh-brand)',
-                            opacity: syncing === bs.biq_stores?.id ? 0.6 : 1, transition: 'transform 0.1s',
+                            opacity: syncing === bs.biq_stores?.id ? 0.7 : 1, transition: 'transform 0.1s',
+                            display: 'inline-flex', alignItems: 'center', gap: 6,
                           }}
                           onMouseEnter={e => { if (syncing !== bs.biq_stores?.id) e.currentTarget.style.transform = 'translateY(-1px)'; }}
                           onMouseLeave={e => e.currentTarget.style.transform = 'translateY(0)'}
                         >
+                          {syncing === bs.biq_stores?.id && (
+                            <span style={{ width: 12, height: 12, borderRadius: '50%', border: '2px solid #fff', borderTopColor: 'transparent', animation: 'spin 0.6s linear infinite', display: 'inline-block' }} />
+                          )}
                           {syncing === bs.biq_stores?.id ? 'Syncing…' : 'Sync now'}
                         </button>
                         <button

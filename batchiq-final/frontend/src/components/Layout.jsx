@@ -41,7 +41,7 @@ export default function Layout({ children }) {
         <nav style={{ flex: 1, padding: '14px 12px', display: 'flex', flexDirection: 'column', gap: 2 }}>
           <SectionLabel>Workspace</SectionLabel>
           <NavItem to="/" icon={<IconGrid />}>Batches</NavItem>
-          <NavItem to="/research" icon={<IconBulb />}>Research</NavItem>
+          <NavItem to="/research" icon={<IconBulb />}>Research Ideas</NavItem>
           <NavItem to="/activity" icon={<IconActivity />}>Activity</NavItem>
           <SectionLabel>Configure</SectionLabel>
           <NavItem to="/stores" icon={<IconStore />}>Stores</NavItem>
