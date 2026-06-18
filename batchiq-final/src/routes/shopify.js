@@ -5,7 +5,7 @@ const { getConfig } = require('./config');
 
 const router = express.Router();
 
-const SCOPES = 'read_orders,read_products';
+const SCOPES = 'read_orders,read_products,read_markets';
 
 // ── Step 1: Redirect to Shopify OAuth ──────────────────────────────────────
 router.get('/auth', async (req, res) => {

@@ -67,7 +67,7 @@ router.post('/connect', async (req, res) => {
   } catch {}
 
   // Fetch markets (countries) — needs read_markets scope, else falls back to shop country
-  let markets = await getMarkets(shop_domain, accessToken);
+  let { markets } = await getMarkets(shop_domain, accessToken);
   if (markets.length === 0 && country) markets = [country];
 
   // Save store
@@ -94,7 +94,7 @@ router.post('/connect', async (req, res) => {
 
 // PATCH /api/stores/:id
 router.patch('/:id', async (req, res) => {
-  const { name, country, currency, markets, client_id, client_secret } = req.body;
+  let { name, country, currency, markets, client_id, client_secret, shop_domain } = req.body;
   const update = {};
   if (name !== undefined) update.name = name;
   if (country !== undefined) update.country = country;
@@ -109,6 +109,28 @@ router.patch('/:id', async (req, res) => {
       shopify_client_secret: client_secret || cfg.shopify_client_secret,
       updated_at: new Date().toISOString(),
     }).eq('id', 1);
+  }
+
+  // Allow correcting the Shopify store URL
+  if (shop_domain !== undefined && shop_domain.trim()) {
+    shop_domain = shop_domain.replace(/https?:\/\//, '').replace(/\/$/, '').trim();
+    if (!shop_domain.includes('.myshopify.com')) {
+      return res.status(400).json({ error: 'Store URL must end in .myshopify.com' });
+    }
+    update.shop_domain = shop_domain;
+
+    // Re-verify with a fresh token so the corrected domain actually works
+    const cfg = await getConfig();
+    const cid = client_id || cfg.shopify_client_id;
+    const csec = client_secret || cfg.shopify_client_secret;
+    if (cid && csec) {
+      try {
+        const newToken = await getAccessToken(shop_domain, cid, csec);
+        update.access_token = newToken;
+      } catch (err) {
+        return res.status(400).json({ error: `New URL could not be verified: ${err.message}` });
+      }
+    }
   }
 
   const { data, error } = await supabase
@@ -133,11 +155,11 @@ router.post('/:id/refresh-markets', async (req, res) => {
     try { token = await getAccessToken(store.shop_domain, cfg.shopify_client_id, cfg.shopify_client_secret); } catch {}
   }
 
-  const markets = await getMarkets(store.shop_domain, token);
+  const { markets, error: mErr } = await getMarkets(store.shop_domain, token);
   if (markets.length > 0) {
     await supabase.from('biq_stores').update({ markets }).eq('id', store.id);
   }
-  res.json({ success: true, markets });
+  res.json({ success: true, markets, marketError: mErr || null });
 });
 
 // DELETE /api/stores/:id — soft delete

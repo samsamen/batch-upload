@@ -34,18 +34,22 @@ async function getAccessToken(shopDomain, clientId, clientSecret) {
 module.exports = { getAccessToken };
 
 // Fetch markets (countries) for a store via GraphQL. Requires read_markets scope.
-// Returns array of country codes like ["FI","SE"]. Empty array if scope missing.
+// Returns { markets: ["FI","SE"], error: null } or { markets: [], error: "reason" }.
 async function getMarkets(shopDomain, accessToken) {
   const fetch = require('node-fetch');
-  const query = `query { markets(first: 20) { nodes { name enabled regions(first: 50) { nodes { ... on MarketRegionCountry { code } } } } } }`;
+  const query = `query { markets(first: 50) { nodes { name enabled regions(first: 50) { nodes { ... on MarketRegionCountry { code } } } } } }`;
   try {
-    const res = await fetch(`https://${shopDomain}/admin/api/2024-10/graphql.json`, {
+    const res = await fetch(`https://${shopDomain}/admin/api/2025-01/graphql.json`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': accessToken },
       body: JSON.stringify({ query }),
     });
     const json = await res.json();
-    if (json.errors || !json.data?.markets) return [];
+    if (json.errors) {
+      const msg = Array.isArray(json.errors) ? json.errors.map(e => e.message).join('; ') : JSON.stringify(json.errors);
+      return { markets: [], error: msg };
+    }
+    if (!json.data?.markets) return { markets: [], error: 'No markets data returned (check read_markets scope).' };
     const codes = new Set();
     for (const m of json.data.markets.nodes) {
       if (m.enabled === false) continue;
@@ -53,9 +57,9 @@ async function getMarkets(shopDomain, accessToken) {
         if (r.code) codes.add(r.code);
       }
     }
-    return [...codes];
-  } catch {
-    return [];
+    return { markets: [...codes], error: null };
+  } catch (err) {
+    return { markets: [], error: err.message };
   }
 }
 

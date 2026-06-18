@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api, fmtDate } from '../api.js';
 
-const SCOPES = 'read_products,write_products,read_orders,read_all_orders,write_metaobjects,write_translations';
+const SCOPES = 'read_products,write_products,read_orders,read_all_orders,read_markets,write_metaobjects,write_translations';
 
 function Label({ children }) {
   return (
@@ -18,17 +18,20 @@ function Label({ children }) {
 function Btn({ children, onClick, disabled, variant = 'ghost', full }) {
   const styles = {
     primary: { background: 'linear-gradient(135deg, #818CF8, #6366F1)', color: '#fff', border: 'none', fontWeight: 700, boxShadow: 'var(--sh-brand)' },
-    ghost:   { background: 'transparent', color: 'var(--t2)', border: '1px solid var(--b2)', fontWeight: 500 },
+    ghost:   { background: 'var(--s1)', color: 'var(--t1)', border: '1px solid var(--b2)', fontWeight: 600 },
   };
   return (
     <button
       onClick={onClick} disabled={disabled}
       style={{
-        padding: '9px 16px', borderRadius: 5, fontSize: 12,
+        padding: '9px 16px', borderRadius: 9, fontSize: 13,
         cursor: disabled ? 'not-allowed' : 'pointer', fontFamily: 'inherit',
-        opacity: disabled ? 0.5 : 1, transition: 'opacity 0.1s',
-        width: full ? '100%' : 'auto', ...styles[variant],
+        opacity: disabled ? 0.6 : 1, transition: 'transform 0.1s, opacity 0.1s',
+        width: full ? '100%' : 'auto', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7,
+        ...styles[variant],
       }}
+      onMouseEnter={e => { if (!disabled) e.currentTarget.style.transform = 'translateY(-1px)'; }}
+      onMouseLeave={e => e.currentTarget.style.transform = 'translateY(0)'}
     >
       {children}
     </button>
@@ -232,7 +235,7 @@ function ConnectModal({ onClose, onConnected, savedConfig }) {
                 {SCOPES}
               </div>
               <div style={{ fontSize: 10, color: 'var(--t3)', marginTop: 10, lineHeight: 1.6 }}>
-                <strong style={{ color: 'var(--t2)' }}>read_all_orders</strong> is a protected scope — Shopify only gives 60 days of order history without it. For a custom app on your own store it's usually granted on install.
+                <strong style={{ color: 'var(--t2)' }}>read_all_orders</strong> gives full order history (without it Shopify caps at 60 days). <strong style={{ color: 'var(--t2)' }}>read_markets</strong> lets BatchIQ read which countries each store sells to, so it can warn about overlap and auto-fill markets.
               </div>
             </div>
           </div>
@@ -250,6 +253,7 @@ function Step({ children }) {
 function EditStoreModal({ store, onClose, onSaved }) {
   const [form, setForm] = useState({
     name: store.name || '',
+    shop_domain: store.shop_domain || '',
     currency: store.currency || 'EUR',
     markets: (store.markets || []).join(', '),
     client_id: '',
@@ -263,10 +267,12 @@ function EditStoreModal({ store, onClose, onSaved }) {
 
   async function save() {
     if (!form.name.trim()) { setError('Name is required.'); return; }
+    if (!form.shop_domain.trim()) { setError('Store URL is required.'); return; }
     setLoading(true); setError(null);
     try {
       const markets = form.markets.split(',').map(m => m.trim().toUpperCase()).filter(Boolean);
       const body = { name: form.name.trim(), currency: form.currency.trim() || 'EUR', markets };
+      if (form.shop_domain.trim() !== store.shop_domain) body.shop_domain = form.shop_domain.trim();
       if (form.client_id.trim()) body.client_id = form.client_id.trim();
       if (form.client_secret.trim()) body.client_secret = form.client_secret.trim();
       const updated = await api.patch(`/api/stores/${store.id}`, body);
@@ -280,7 +286,9 @@ function EditStoreModal({ store, onClose, onSaved }) {
       const r = await api.post(`/api/stores/${store.id}/refresh-markets`, {});
       const mk = (r.markets || []);
       setForm(f => ({ ...f, markets: mk.join(', ') }));
-      setOkMsg(mk.length ? `Pulled ${mk.length} market(s) from Shopify.` : 'No markets returned (check read_markets scope).');
+      if (mk.length) setOkMsg(`Pulled ${mk.length} market(s) from Shopify.`);
+      else if (r.marketError) setError(`Shopify: ${r.marketError}`);
+      else setOkMsg('No markets configured in this Shopify store.');
     } catch (err) { setError(err.message); } finally { setRefreshing(false); }
   }
 
@@ -296,7 +304,7 @@ function EditStoreModal({ store, onClose, onSaved }) {
         {okMsg && <div style={{ background: 'var(--green-bg)', border: '1px solid var(--green)', borderRadius: 9, padding: '9px 13px', marginBottom: 14, fontSize: 12.5, color: 'var(--green)', fontWeight: 600 }}>{okMsg}</div>}
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-          <div style={{ fontSize: 11, color: 'var(--t3)', fontFamily: "'Fira Code', monospace" }}>{store.shop_domain}</div>
+          <div><Label>Shopify store URL</Label><input value={form.shop_domain} onChange={set('shop_domain')} style={{ fontFamily: "'Fira Code', monospace", fontSize: 12 }} placeholder="your-store.myshopify.com" /></div>
           <div><Label>Store name</Label><input value={form.name} onChange={set('name')} /></div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <div><Label>Currency</Label><input value={form.currency} onChange={set('currency')} style={{ fontFamily: "'Fira Code', monospace" }} /></div>
@@ -338,6 +346,7 @@ export default function Stores() {
   const [showConnect, setConnect] = useState(false);
   const [config, setConfig]       = useState({ shopify_client_id: '', has_secret: false });
   const [syncingId, setSyncingId] = useState(null);
+  const [syncingAll, setSyncingAll] = useState(false);
   const [editStore, setEditStore] = useState(null);
   const [searchParams]            = useSearchParams();
 
@@ -369,6 +378,21 @@ export default function Stores() {
       const errs = r.errors?.length ? ` (${r.errors.length} error${r.errors.length > 1 ? 's' : ''})` : '';
       setSuccess(`${name}: synced ${r.synced} day(s)${errs}. Check Activity for detail.`);
     } catch (err) { setError(err.message); } finally { setSyncingId(null); }
+  }
+
+  async function syncAllStores() {
+    setSyncingAll(true);
+    setError(null); setSuccess(null);
+    try {
+      // Refresh markets for every store, then run the global performance sync
+      await Promise.all(stores.map(s =>
+        api.post(`/api/stores/${s.id}/refresh-markets`, {}).catch(() => null)
+      ));
+      const r = await api.post('/api/sync', { days: 30 });
+      const errs = r.errors?.length ? ` (${r.errors.length} error${r.errors.length > 1 ? 's' : ''})` : '';
+      setSuccess(`Synced all ${stores.length} store(s): ${r.synced} day(s) updated${errs}. Check Activity for detail.`);
+      await load();
+    } catch (err) { setError(err.message); } finally { setSyncingAll(false); }
   }
 
   async function disconnect(id, name) {
@@ -403,7 +427,13 @@ export default function Stores() {
             Connect each store with your app credentials. No login required.
           </div>
         </div>
-        <Btn onClick={() => setConnect(true)} variant="primary">Connect Store</Btn>
+        <div style={{ display: 'flex', gap: 9 }}>
+          <Btn onClick={syncAllStores} disabled={syncingAll || stores.length === 0} variant="ghost">
+            {syncingAll && <span style={{ width: 14, height: 14, borderRadius: '50%', border: '2px solid var(--brand)', borderTopColor: 'transparent', animation: 'spin 0.6s linear infinite', display: 'inline-block' }} />}
+            {syncingAll ? 'Syncing all…' : 'Sync all stores'}
+          </Btn>
+          <Btn onClick={() => setConnect(true)} variant="primary">Connect Store</Btn>
+        </div>
       </div>
 
       <div style={{ padding: '24px 32px', display: 'flex', flexDirection: 'column', gap: 16, maxWidth: 920 }}>

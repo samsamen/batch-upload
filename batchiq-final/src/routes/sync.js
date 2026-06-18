@@ -38,9 +38,11 @@ async function syncBatchStore(batchStore, fromDate, toDate) {
 
   // Refresh markets (countries) from Shopify and store them
   try {
-    const markets = await getMarkets(store.shop_domain, store.access_token);
+    const { markets, error: mErr } = await getMarkets(store.shop_domain, store.access_token);
     if (markets.length > 0) {
       await supabase.from('biq_stores').update({ markets }).eq('id', store.id);
+    } else if (mErr) {
+      await logActivity('store', 'warning', `${storeName}: could not read markets — ${mErr}`, { store_id: store.id });
     }
   } catch { /* markets are best-effort, never block the sync */ }
 
@@ -200,9 +202,15 @@ async function syncStoreNow(storeId, days = 30) {
       if (cfg.shopify_client_id && cfg.shopify_client_secret) {
         try { token = await getAccessToken(store.shop_domain, cfg.shopify_client_id, cfg.shopify_client_secret); } catch {}
       }
-      const markets = await getMarkets(store.shop_domain, token);
-      if (markets.length > 0) await supabase.from('biq_stores').update({ markets }).eq('id', storeId);
-      await logActivity('store', 'success', `${store.name}: connected — markets refreshed (${markets.join(', ') || 'none'})`);
+      const { markets, error: mErr } = await getMarkets(store.shop_domain, token);
+      if (markets.length > 0) {
+        await supabase.from('biq_stores').update({ markets }).eq('id', storeId);
+        await logActivity('store', 'success', `${store.name}: markets refreshed — ${markets.join(', ')}`);
+      } else if (mErr) {
+        await logActivity('store', 'warning', `${store.name}: could not read markets — ${mErr}`, { store_id: storeId });
+      } else {
+        await logActivity('store', 'info', `${store.name}: no markets configured in Shopify`);
+      }
     }
   } catch (err) {
     await logActivity('store', 'warning', `Market refresh failed for store`, { error: err.message });
