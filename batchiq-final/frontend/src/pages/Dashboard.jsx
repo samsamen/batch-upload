@@ -304,39 +304,123 @@ function BatchModal({ mode, batch, onClose, onSaved }) {
 }
 
 // ═══ Batch Row (no longer a Link) ═════════════════════════════════════════════
-function BatchRow({ batch, rank, maxRevenue, selected, onSelect, onAction, onOpen }) {
+function BatchRow({ batch, rank, maxRevenue, selected, onSelect, onAction, expanded, onToggle, onSync, syncing }) {
   const [hover, setHover] = useState(false);
   const revenue = batch.totals?.revenue || 0;
   const orders = batch.totals?.orders || 0;
   const adSpend = batch.totals?.ad_spend || 0;
   const roas = adSpend > 0 ? (revenue / adSpend) : null;
   const barPct = maxRevenue > 0 ? (revenue / maxRevenue) * 100 : 0;
+  const stores = batch.biq_batch_stores || [];
+  const totalProducts = stores.reduce((s, bs) => s + (bs.product_count || 0), 0);
 
   return (
-    <div onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
-      style={{
-        display: 'grid', gridTemplateColumns: '38px 38px 100px 1fr 110px 120px 60px 84px 90px 100px 40px',
-        alignItems: 'center', gap: 12, padding: '13px 20px', borderBottom: '1px solid var(--b1)',
-        background: selected ? 'var(--brand-l)' : hover ? 'var(--s2)' : 'transparent', transition: 'background 0.12s',
-      }}>
-      <Checkbox checked={selected} onChange={onSelect} />
-      <RankBadge rank={rank} />
-      <div>{batch.batch_tag ? <TagChip tag={batch.batch_tag} /> : <span style={{ fontFamily: "'Fira Code', monospace", fontSize: 10.5, color: 'var(--t4)' }}>{batch.batch_code}</span>}</div>
-      <div style={{ minWidth: 0, cursor: 'pointer' }} onClick={onOpen}>
-        <div style={{ fontWeight: 700, color: 'var(--t1)', fontSize: 13.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{batch.name}</div>
-        {batch.thesis && <div style={{ fontSize: 11.5, color: 'var(--t2)', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{batch.thesis}</div>}
-      </div>
-      <div style={{ fontSize: 11.5, color: 'var(--t2)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{batch.source || '—'}</div>
-      <div style={{ textAlign: 'right', fontFamily: "'Fira Code', monospace", fontSize: 14, fontWeight: 600, color: revenue > 0 ? 'var(--t1)' : 'var(--t4)' }}>{fmtCurrency(revenue)}</div>
-      <div style={{ textAlign: 'right', fontFamily: "'Fira Code', monospace", fontSize: 13, color: 'var(--t2)' }}>{orders}</div>
-      <div style={{ textAlign: 'right', fontFamily: "'Fira Code', monospace", fontSize: 12.5, fontWeight: 600, color: roas ? (roas >= 2 ? 'var(--green)' : 'var(--amber)') : 'var(--t4)' }}>{roas ? `${roas.toFixed(1)}×` : '—'}</div>
-      <div style={{ padding: '0 2px' }}>
-        <div style={{ height: 5, background: 'var(--s3)', borderRadius: 3, overflow: 'hidden' }}>
-          <div style={{ height: '100%', width: `${barPct}%`, background: 'linear-gradient(90deg, #818CF8, #6366F1)', borderRadius: 3, transition: 'width 0.4s ease' }} />
+    <div style={{ borderBottom: '1px solid var(--b1)', background: selected ? 'var(--brand-l)' : expanded ? 'var(--s2)' : 'transparent', transition: 'background 0.12s' }}>
+      {/* Main row */}
+      <div onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
+        style={{ display: 'grid', gridTemplateColumns: '38px 30px 38px 100px 1fr 110px 110px 56px 80px 90px 100px', alignItems: 'center', gap: 12, padding: '13px 20px', background: hover && !expanded && !selected ? 'var(--s2)' : 'transparent', transition: 'background 0.12s' }}>
+        <Checkbox checked={selected} onChange={onSelect} />
+        {/* Expand chevron */}
+        <button onClick={onToggle} style={{ width: 26, height: 26, borderRadius: 7, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--t2)', background: expanded ? 'var(--s3)' : 'transparent', cursor: 'pointer', transition: 'all 0.12s' }}>
+          <svg width="13" height="13" viewBox="0 0 13 13" fill="none" style={{ transform: expanded ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s' }}><path d="M4.5 2.5L8.5 6.5L4.5 10.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/></svg>
+        </button>
+        <RankBadge rank={rank} />
+        <div>{batch.batch_tag ? <TagChip tag={batch.batch_tag} /> : <span style={{ fontFamily: "'Fira Code', monospace", fontSize: 10.5, color: 'var(--t4)' }}>{batch.batch_code}</span>}</div>
+        <div style={{ minWidth: 0, cursor: 'pointer' }} onClick={onToggle}>
+          <div style={{ fontWeight: 700, color: 'var(--t1)', fontSize: 13.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{batch.name}</div>
+          {batch.thesis && <div style={{ fontSize: 11.5, color: 'var(--t2)', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{batch.thesis}</div>}
         </div>
+        <div style={{ textAlign: 'right', fontFamily: "'Fira Code', monospace", fontSize: 14, fontWeight: 600, color: revenue > 0 ? 'var(--t1)' : 'var(--t4)' }}>{fmtCurrency(revenue)}</div>
+        <div style={{ textAlign: 'right', fontFamily: "'Fira Code', monospace", fontSize: 13, color: 'var(--t2)' }}>{orders} ord</div>
+        <div style={{ textAlign: 'right', fontFamily: "'Fira Code', monospace", fontSize: 12.5, fontWeight: 600, color: roas ? (roas >= 2 ? 'var(--green)' : 'var(--amber)') : 'var(--t4)' }}>{roas ? `${roas.toFixed(1)}×` : '—'}</div>
+        <div style={{ padding: '0 2px' }}>
+          <div style={{ height: 5, background: 'var(--s3)', borderRadius: 3, overflow: 'hidden' }}>
+            <div style={{ height: '100%', width: `${barPct}%`, background: 'linear-gradient(90deg, #818CF8, #6366F1)', borderRadius: 3, transition: 'width 0.4s ease' }} />
+          </div>
+        </div>
+        <div><StatusDot status={batch.status} /></div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end' }}><ActionMenu batch={batch} onAction={onAction} /></div>
       </div>
-      <div><StatusDot status={batch.status} /></div>
-      <div style={{ display: 'flex', justifyContent: 'flex-end' }}><ActionMenu batch={batch} onAction={onAction} /></div>
+
+      {/* Expanded panel */}
+      {expanded && (
+        <div style={{ padding: '4px 20px 20px 68px', animation: 'fadeIn 0.15s ease' }}>
+          <div style={{ background: 'var(--s1)', border: '1px solid var(--b2)', borderRadius: 12, overflow: 'hidden' }}>
+            {/* Toolbar */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderBottom: '1px solid var(--b1)', flexWrap: 'wrap', gap: 10 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+                <Pill label="Stores" value={stores.length} />
+                <Pill label="Products" value={totalProducts} accent="var(--brand)" />
+                <Pill label="Revenue" value={fmtCurrency(revenue)} mono />
+                <Pill label="Orders" value={orders} mono />
+                {batch.source && <Pill label="Source" value={batch.source} />}
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <Btn onClick={() => onSync(batch)} disabled={syncing} variant="primary" size="sm">{syncing ? 'Syncing…' : 'Sync now'}</Btn>
+                <Btn onClick={() => onAction('edit')} variant="ghost" size="sm">Edit</Btn>
+              </div>
+            </div>
+
+            {/* Metadata */}
+            {(batch.thesis || batch.validation_notes || batch.changes?.length > 0) && (
+              <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--b1)', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {batch.thesis && <MetaLine label="Thesis" value={batch.thesis} />}
+                {batch.validation_notes && <MetaLine label="Validation" value={batch.validation_notes} />}
+                {batch.changes?.length > 0 && (
+                  <div>
+                    <div style={{ fontSize: 9.5, fontWeight: 700, color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 5 }}>Changes</div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                      {batch.changes.map(c => <span key={c} style={{ fontSize: 11, fontWeight: 600, color: 'var(--brand)', background: 'var(--brand-l)', borderRadius: 5, padding: '2px 9px' }}>{c}</span>)}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Stores */}
+            <div style={{ padding: '6px 0' }}>
+              {stores.length === 0 ? (
+                <div style={{ padding: '20px 16px', textAlign: 'center', fontSize: 12, color: 'var(--t3)' }}>No stores linked yet. Use Edit to link stores.</div>
+              ) : (
+                stores.map((bs, i) => {
+                  const r = (bs.biq_performance_daily || []).reduce((s, p) => s + parseFloat(p.revenue || 0), 0);
+                  const o = (bs.biq_performance_daily || []).reduce((s, p) => s + (p.orders || 0), 0);
+                  const tag = bs.shopify_tag || batch.batch_tag;
+                  return (
+                    <div key={bs.id} style={{ display: 'grid', gridTemplateColumns: '1fr 140px 90px 90px', alignItems: 'center', gap: 12, padding: '10px 16px', borderTop: i > 0 ? '1px solid var(--b1)' : 'none' }}>
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--t1)' }}>{bs.biq_stores?.name || '—'}</div>
+                        {bs.notes && <div style={{ fontSize: 11, color: 'var(--t3)', marginTop: 1 }}>{bs.notes}</div>}
+                      </div>
+                      <div>{tag ? <TagChip tag={tag} /> : <span style={{ fontSize: 11, color: 'var(--t3)' }}>no tag</span>}</div>
+                      <div style={{ textAlign: 'right', fontFamily: "'Fira Code', monospace", fontSize: 12, color: 'var(--t2)' }}>{bs.product_count || 0} prod</div>
+                      <div style={{ textAlign: 'right', fontFamily: "'Fira Code', monospace", fontSize: 13, fontWeight: 600, color: r > 0 ? 'var(--green)' : 'var(--t4)' }}>{fmtCurrency(r)}</div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Pill({ label, value, mono, accent }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+      <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '0.07em' }}>{label}</span>
+      <span style={{ fontSize: 13.5, fontWeight: 700, color: accent || 'var(--t1)', fontFamily: mono ? "'Fira Code', monospace" : 'inherit' }}>{value}</span>
+    </div>
+  );
+}
+
+function MetaLine({ label, value }) {
+  return (
+    <div>
+      <div style={{ fontSize: 9.5, fontWeight: 700, color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 3 }}>{label}</div>
+      <div style={{ fontSize: 12.5, color: 'var(--t1)', lineHeight: 1.5 }}>{value}</div>
     </div>
   );
 }
@@ -354,6 +438,8 @@ export default function Dashboard() {
   const [sortBy, setSortBy] = useState('revenue');
   const [range, setRange] = useState('30');
   const [selected, setSelected] = useState(new Set());
+  const [expandedId, setExpandedId] = useState(null);
+  const [syncingId, setSyncingId] = useState(null);
 
   useEffect(() => { load(); }, [range]);
 
@@ -366,6 +452,12 @@ export default function Dashboard() {
     setSyncing(true);
     try { await api.post('/api/sync', { days: 30 }); await load(); }
     catch (err) { setError(err.message); } finally { setSyncing(false); }
+  }
+
+  async function syncOneBatch(batch) {
+    setSyncingId(batch.id);
+    try { await api.post(`/api/sync/batch/${batch.id}`, { days: 30 }); await load(); }
+    catch (err) { setError(err.message); } finally { setSyncingId(null); }
   }
 
   async function applyAction(batch, action) {
@@ -501,9 +593,10 @@ export default function Dashboard() {
 
       <div style={{ margin: '0 32px 32px', background: 'var(--s1)', border: '1px solid var(--b1)', borderRadius: 14, overflow: 'visible', boxShadow: 'var(--sh-md)' }}>
         {!loading && filtered.length > 0 && (
-          <div style={{ display: 'grid', gridTemplateColumns: '38px 38px 100px 1fr 110px 120px 60px 84px 90px 100px 40px', alignItems: 'center', gap: 12, padding: '11px 20px', borderBottom: '1px solid var(--b1)', background: 'var(--s2)', borderRadius: '14px 14px 0 0' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '38px 30px 38px 100px 1fr 110px 110px 56px 80px 90px 100px', alignItems: 'center', gap: 12, padding: '11px 20px', borderBottom: '1px solid var(--b1)', background: 'var(--s2)', borderRadius: '14px 14px 0 0' }}>
             <Checkbox checked={allSelected} indeterminate={someSelected} onChange={toggleAll} />
-            {['#', 'Tag', 'Batch', 'Source', 'Revenue', 'Orders', 'ROAS', 'Relative', 'Status'].map((h) => (
+            <div />
+            {['#', 'Tag', 'Batch', 'Revenue', 'Orders', 'ROAS', 'Relative', 'Status'].map((h) => (
               <div key={h} style={{ fontSize: 9.5, fontWeight: 700, color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '0.07em', textAlign: ['Revenue', 'Orders', 'ROAS'].includes(h) ? 'right' : 'left' }}>{h}</div>
             ))}
             <div />
@@ -525,7 +618,9 @@ export default function Dashboard() {
           filtered.map((batch, i) => (
             <BatchRow key={batch.id} batch={batch} rank={i + 1} maxRevenue={maxRevenue}
               selected={selected.has(batch.id)} onSelect={() => toggleSelect(batch.id)}
-              onOpen={() => navigate(`/batches/${batch.id}`)}
+              expanded={expandedId === batch.id}
+              onToggle={() => setExpandedId(prev => prev === batch.id ? null : batch.id)}
+              onSync={syncOneBatch} syncing={syncingId === batch.id}
               onAction={(action) => applyAction(batch, action)} />
           ))
         )}

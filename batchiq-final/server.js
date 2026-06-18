@@ -11,6 +11,7 @@ const batchesRoutes = require('./src/routes/batches');
 const syncRoutes    = require('./src/routes/sync');
 const configRoutes  = require('./src/routes/config');
 const researchRoutes = require('./src/routes/research');
+const activityRoutes = require('./src/routes/activity');
 const { syncAll }   = require('./src/routes/sync');
 
 const app  = express();
@@ -30,6 +31,7 @@ app.use('/api/batches',  batchesRoutes);
 app.use('/api/sync',     syncRoutes);
 app.use('/api/config',   configRoutes);
 app.use('/api/research', researchRoutes);
+app.use('/api/activity', activityRoutes);
 
 // Serve frontend — built into backend/public during Railway build
 const frontendDist = path.join(__dirname, 'public');
@@ -38,11 +40,14 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(frontendDist, 'index.html'));
 });
 
-cron.schedule('0 6 * * *', async () => {
-  console.log('Cron: daily sync...');
-  try { await syncAll(1); } catch (err) { console.error(err.message); }
+// Auto-sync every 3 hours (syncs last 30 days each time)
+cron.schedule('0 */3 * * *', async () => {
+  console.log('Cron: auto-sync...');
+  try { await syncAll(30); } catch (err) { console.error(err.message); }
 });
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`\nBatchIQ running on port ${PORT}\n`);
+  // Run one sync shortly after startup so data appears without waiting for cron
+  setTimeout(() => { syncAll(30).catch(err => console.error('Startup sync:', err.message)); }, 8000);
 });

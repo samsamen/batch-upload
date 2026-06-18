@@ -103,3 +103,13 @@ CREATE TABLE IF NOT EXISTS biq_research (
   created_at    TIMESTAMPTZ DEFAULT NOW(),
   updated_at    TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Activity log
+CREATE TABLE IF NOT EXISTS biq_activity (
+  id          UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  type        TEXT NOT NULL,
+  level       TEXT DEFAULT 'info',
+  message     TEXT NOT NULL,
+  detail      JSONB,
+  created_at  TIMESTAMPTZ DEFAULT NOW()
+);

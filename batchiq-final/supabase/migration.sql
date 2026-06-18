@@ -41,3 +41,17 @@ CREATE TABLE IF NOT EXISTS biq_research (
 
 -- Sub-tag is optional on batch-store assignments
 ALTER TABLE biq_batch_stores ALTER COLUMN shopify_tag DROP NOT NULL;
+
+-- Activity log — track syncs, changes, errors
+CREATE TABLE IF NOT EXISTS biq_activity (
+  id          UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  type        TEXT NOT NULL,              -- sync / batch / store / error
+  level       TEXT DEFAULT 'info',        -- info / success / warning / error
+  message     TEXT NOT NULL,
+  detail      JSONB,
+  created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_activity_created ON biq_activity (created_at DESC);
+
+-- Product count cache on batch-store links
+ALTER TABLE biq_batch_stores ADD COLUMN IF NOT EXISTS product_count INTEGER DEFAULT 0;

@@ -1,5 +1,6 @@
 const express = require('express');
 const supabase = require('../lib/supabase');
+const { logActivity } = require('../lib/activity');
 
 const router = express.Router();
 
@@ -84,7 +85,7 @@ router.get('/:id', async (req, res) => {
   const { data, error } = await supabase
     .from('biq_batches')
     .select(`
-      id, batch_code, name, source, thesis, validation_notes, tags, status, created_at,
+      id, batch_code, batch_tag, name, source, thesis, validation_notes, tags, sub_tags, changes, changes_note, status, created_at,
       biq_batch_stores (
         id, shopify_tag, product_count, notes, added_at,
         biq_stores ( id, name, shop_domain, country, currency ),
@@ -123,6 +124,7 @@ router.post('/', async (req, res) => {
   if (error) return res.status(500).json({ error: error.message });
 
   // Link selected stores (store_links = [{ store_id, shopify_tag? }])
+  let linkedCount = 0;
   if (Array.isArray(store_links) && store_links.length > 0) {
     const rows = store_links
       .filter(l => l.store_id)
@@ -130,8 +132,11 @@ router.post('/', async (req, res) => {
     if (rows.length > 0) {
       const { error: linkErr } = await supabase.from('biq_batch_stores').insert(rows);
       if (linkErr) console.error('Store link error:', linkErr.message);
+      else linkedCount = rows.length;
     }
   }
+
+  await logActivity('batch', 'success', `Batch "${data.name}" created${linkedCount ? ` and linked to ${linkedCount} store(s)` : ''}`, { batch_id: data.id, tag: data.batch_tag });
 
   res.status(201).json(data);
 });

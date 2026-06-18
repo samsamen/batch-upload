@@ -61,20 +61,22 @@ function Label({ children, style }) {
 
 function Btn({ children, onClick, disabled, variant = 'ghost' }) {
   const styles = {
-    primary: { background: 'var(--brand)', color: '#0E0F14', border: 'none', fontWeight: 700 },
-    ghost:   { background: 'transparent', color: 'var(--t2)', border: '1px solid var(--b2)', fontWeight: 500 },
-    danger:  { background: 'transparent', color: 'var(--red)', border: '1px solid rgba(239,80,80,0.3)', fontWeight: 500 },
+    primary: { background: 'linear-gradient(135deg, #818CF8, #6366F1)', color: '#fff', border: 'none', fontWeight: 700, boxShadow: 'var(--sh-brand)' },
+    ghost:   { background: 'var(--s1)', color: 'var(--t1)', border: '1px solid var(--b2)', fontWeight: 600 },
+    danger:  { background: 'var(--red-bg)', color: 'var(--red)', border: '1px solid var(--red)', fontWeight: 600 },
   };
   return (
     <button
       onClick={onClick}
       disabled={disabled}
       style={{
-        padding: '7px 14px', borderRadius: 4, fontSize: 12,
+        padding: '9px 16px', borderRadius: 9, fontSize: 13,
         cursor: disabled ? 'not-allowed' : 'pointer',
-        fontFamily: 'var(--sans)', opacity: disabled ? 0.5 : 1,
-        transition: 'opacity 0.1s', ...styles[variant],
+        opacity: disabled ? 0.5 : 1,
+        transition: 'transform 0.1s', display: 'inline-flex', alignItems: 'center', gap: 7, ...styles[variant],
       }}
+      onMouseEnter={e => { if (!disabled) e.currentTarget.style.transform = 'translateY(-1px)'; }}
+      onMouseLeave={e => e.currentTarget.style.transform = 'translateY(0)'}
     >
       {children}
     </button>
@@ -484,30 +486,31 @@ export default function BatchDetail() {
                       {bs.totals.units}
                     </td>
                     <td style={{ padding: '12px 20px', textAlign: 'right' }}>
-                      <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
                         <button
                           onClick={() => syncStore(bs.biq_stores?.id)}
                           disabled={syncing === bs.biq_stores?.id}
                           style={{
-                            fontFamily: "'Fira Code', monospace", fontSize: 9, textTransform: 'uppercase',
-                            letterSpacing: '0.08em', color: 'var(--t2)', background: 'none',
-                            border: '1px solid var(--b2)', borderRadius: 3, padding: '2px 8px',
-                            cursor: 'pointer', height: 20,
-                            opacity: syncing === bs.biq_stores?.id ? 0.5 : 1,
+                            fontSize: 12, fontWeight: 700, color: '#fff',
+                            background: 'linear-gradient(135deg, #818CF8, #6366F1)',
+                            border: 'none', borderRadius: 8, padding: '7px 14px',
+                            cursor: 'pointer', boxShadow: 'var(--sh-brand)',
+                            opacity: syncing === bs.biq_stores?.id ? 0.6 : 1, transition: 'transform 0.1s',
                           }}
+                          onMouseEnter={e => { if (syncing !== bs.biq_stores?.id) e.currentTarget.style.transform = 'translateY(-1px)'; }}
+                          onMouseLeave={e => e.currentTarget.style.transform = 'translateY(0)'}
                         >
-                          {syncing === bs.biq_stores?.id ? 'Syncing' : 'Sync'}
+                          {syncing === bs.biq_stores?.id ? 'Syncing…' : 'Sync now'}
                         </button>
                         <button
                           onClick={() => removeStore(bs.id)}
                           style={{
-                            fontFamily: "'Fira Code', monospace", fontSize: 9, textTransform: 'uppercase',
-                            letterSpacing: '0.08em', color: 'var(--t3)', background: 'none',
-                            border: '1px solid var(--b1)', borderRadius: 3, padding: '2px 8px',
-                            cursor: 'pointer', height: 20, transition: 'color 0.1s, border-color 0.1s',
+                            fontSize: 12, fontWeight: 600, color: 'var(--t1)',
+                            background: 'var(--s1)', border: '1px solid var(--b2)',
+                            borderRadius: 8, padding: '7px 14px', cursor: 'pointer', transition: 'all 0.12s',
                           }}
-                          onMouseEnter={e => { e.target.style.color = 'var(--red)'; e.target.style.borderColor = 'rgba(239,80,80,0.3)'; }}
-                          onMouseLeave={e => { e.target.style.color = 'var(--t3)'; e.target.style.borderColor = 'var(--b1)'; }}
+                          onMouseEnter={e => { e.currentTarget.style.color = 'var(--red)'; e.currentTarget.style.borderColor = 'var(--red)'; e.currentTarget.style.background = 'var(--red-bg)'; }}
+                          onMouseLeave={e => { e.currentTarget.style.color = 'var(--t1)'; e.currentTarget.style.borderColor = 'var(--b2)'; e.currentTarget.style.background = 'var(--s1)'; }}
                         >
                           Remove
                         </button>

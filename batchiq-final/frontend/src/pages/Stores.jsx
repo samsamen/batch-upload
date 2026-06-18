@@ -17,7 +17,7 @@ function Label({ children }) {
 
 function Btn({ children, onClick, disabled, variant = 'ghost', full }) {
   const styles = {
-    primary: { background: 'var(--gold)', color: '#0E0F14', border: 'none', fontWeight: 700 },
+    primary: { background: 'linear-gradient(135deg, #818CF8, #6366F1)', color: '#fff', border: 'none', fontWeight: 700, boxShadow: 'var(--sh-brand)' },
     ghost:   { background: 'transparent', color: 'var(--t2)', border: '1px solid var(--b2)', fontWeight: 500 },
   };
   return (
