@@ -6,13 +6,14 @@ const { getAccessToken, getMarkets } = require('../lib/shopifyAuth');
 
 const router = express.Router();
 
-// GET /api/stores — list active stores
+// GET /api/stores — list stores. ?include=all also returns disconnected ones.
 router.get('/', async (req, res) => {
-  const { data, error } = await supabase
+  let q = supabase
     .from('biq_stores')
     .select('id, shop_domain, name, country, currency, markets, active, connected_at')
-    .eq('active', true)
     .order('name');
+  if (req.query.include !== 'all') q = q.eq('active', true);
+  const { data, error } = await q;
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
 });
@@ -152,7 +153,9 @@ router.post('/:id/refresh-markets', async (req, res) => {
   let token = store.access_token;
   const cfg = await getConfig();
   if (cfg.shopify_client_id && cfg.shopify_client_secret) {
-    try { token = await getAccessToken(store.shop_domain, cfg.shopify_client_id, cfg.shopify_client_secret); } catch {}
+    try { token = await getAccessToken(store.shop_domain, cfg.shopify_client_id, cfg.shopify_client_secret); } catch (e) {
+      return res.status(400).json({ error: `Token refresh failed: ${e.message}` });
+    }
   }
 
   const { markets, error: mErr } = await getMarkets(store.shop_domain, token);
@@ -162,8 +165,43 @@ router.post('/:id/refresh-markets', async (req, res) => {
   res.json({ success: true, markets, marketError: mErr || null });
 });
 
-// DELETE /api/stores/:id — soft delete
+// POST /api/stores/:id/reconnect — re-fetch a fresh token (e.g. after scope change)
+router.post('/:id/reconnect', async (req, res) => {
+  const { data: store, error } = await supabase
+    .from('biq_stores').select('id, shop_domain, name').eq('id', req.params.id).single();
+  if (error || !store) return res.status(404).json({ error: 'Store not found' });
+
+  const cfg = await getConfig();
+  if (!cfg.shopify_client_id || !cfg.shopify_client_secret) {
+    return res.status(400).json({ error: 'No app credentials saved. Add Client ID + Secret first.' });
+  }
+
+  let accessToken;
+  try {
+    accessToken = await getAccessToken(store.shop_domain, cfg.shopify_client_id, cfg.shopify_client_secret);
+  } catch (err) {
+    return res.status(400).json({ error: `Reconnect failed: ${err.message}` });
+  }
+
+  // Refresh markets too, now that scopes may have changed
+  const { markets } = await getMarkets(store.shop_domain, accessToken);
+  const update = { access_token: accessToken, active: true };
+  if (markets.length > 0) update.markets = markets;
+
+  const { data, error: upErr } = await supabase
+    .from('biq_stores').update(update).eq('id', store.id)
+    .select('id, shop_domain, name, country, currency, markets, active').single();
+  if (upErr) return res.status(500).json({ error: upErr.message });
+  res.json({ success: true, store: data, markets });
+});
+
+// DELETE /api/stores/:id — disconnect (soft) by default, or ?hard=true to remove permanently
 router.delete('/:id', async (req, res) => {
+  if (req.query.hard === 'true') {
+    const { error } = await supabase.from('biq_stores').delete().eq('id', req.params.id);
+    if (error) return res.status(500).json({ error: error.message });
+    return res.json({ success: true, deleted: true });
+  }
   const { error } = await supabase
     .from('biq_stores').update({ active: false }).eq('id', req.params.id);
   if (error) return res.status(500).json({ error: error.message });

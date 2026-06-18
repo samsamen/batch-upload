@@ -357,7 +357,7 @@ export default function Stores() {
   }, []);
 
   async function load() {
-    try { setLoading(true); setStores(await api.get('/api/stores')); }
+    try { setLoading(true); setStores(await api.get('/api/stores?include=all')); }
     catch (err) { setError(err.message); } finally { setLoading(false); }
   }
   async function loadConfig() {
@@ -384,8 +384,8 @@ export default function Stores() {
     setSyncingAll(true);
     setError(null); setSuccess(null);
     try {
-      // Refresh markets for every store, then run the global performance sync
-      await Promise.all(stores.map(s =>
+      // Refresh markets for every active store, then run the global performance sync
+      await Promise.all(stores.filter(s => s.active).map(s =>
         api.post(`/api/stores/${s.id}/refresh-markets`, {}).catch(() => null)
       ));
       const r = await api.post('/api/sync', { days: 30 });
@@ -395,9 +395,24 @@ export default function Stores() {
     } catch (err) { setError(err.message); } finally { setSyncingAll(false); }
   }
 
+  async function reconnect(id, name) {
+    setSyncingId(id); setError(null); setSuccess(null);
+    try {
+      const r = await api.post(`/api/stores/${id}/reconnect`, {});
+      setStores(p => p.map(s => s.id === id ? { ...s, ...r.store } : s));
+      setSuccess(`${name}: reconnected with a fresh token${r.markets?.length ? ` (markets: ${r.markets.join(', ')})` : ''}.`);
+    } catch (err) { setError(err.message); } finally { setSyncingId(null); }
+  }
+
   async function disconnect(id, name) {
-    if (!confirm(`Disconnect ${name}?`)) return;
-    try { await api.delete(`/api/stores/${id}`); setStores(p => p.filter(s => s.id !== id)); }
+    if (!confirm(`Disconnect ${name}? It's hidden but kept — its data and batch links stay, and you can reconnect later.`)) return;
+    try { await api.delete(`/api/stores/${id}`); setStores(p => p.map(s => s.id === id ? { ...s, active: false } : s)); }
+    catch (err) { setError(err.message); }
+  }
+
+  async function removePermanently(id, name) {
+    if (!confirm(`Permanently delete ${name}? This removes the store and its data for good. This cannot be undone.`)) return;
+    try { await api.delete(`/api/stores/${id}?hard=true`); setStores(p => p.filter(s => s.id !== id)); }
     catch (err) { setError(err.message); }
   }
 
@@ -406,9 +421,10 @@ export default function Stores() {
     setSuccess(`${updated.name} updated.`);
   }
 
-  // Detect markets covered by more than one store
+  // Detect markets covered by more than one active store
+  const activeStores = stores.filter(s => s.active);
   const marketCount = {};
-  for (const s of stores) {
+  for (const s of activeStores) {
     for (const m of (s.markets || [])) {
       marketCount[m] = (marketCount[m] || 0) + 1;
     }
@@ -428,7 +444,7 @@ export default function Stores() {
           </div>
         </div>
         <div style={{ display: 'flex', gap: 9 }}>
-          <Btn onClick={syncAllStores} disabled={syncingAll || stores.length === 0} variant="ghost">
+          <Btn onClick={syncAllStores} disabled={syncingAll || activeStores.length === 0} variant="ghost">
             {syncingAll && <span style={{ width: 14, height: 14, borderRadius: '50%', border: '2px solid var(--brand)', borderTopColor: 'transparent', animation: 'spin 0.6s linear infinite', display: 'inline-block' }} />}
             {syncingAll ? 'Syncing all…' : 'Sync all stores'}
           </Btn>
@@ -471,7 +487,7 @@ export default function Stores() {
         {/* Connected stores */}
         <div style={{ background: 'var(--s1)', border: '1px solid var(--b1)', borderRadius: 5, overflow: 'hidden' }}>
           <div style={{ padding: '12px 20px', borderBottom: '1px solid var(--b1)', fontSize: 12, fontWeight: 600, color: 'var(--t1)' }}>
-            Connected stores ({stores.length})
+            Connected stores ({activeStores.length})
           </div>
           {loading ? (
             <div style={{ padding: '32px 20px', color: 'var(--t3)', fontFamily: "'Fira Code', monospace", fontSize: 11 }}>Loading…</div>
@@ -491,10 +507,15 @@ export default function Stores() {
               <tbody>
                 {stores.map((s, i) => (
                   <tr key={s.id}
-                    style={{ borderBottom: i < stores.length - 1 ? '1px solid var(--b1)' : 'none' }}
+                    style={{ borderBottom: i < stores.length - 1 ? '1px solid var(--b1)' : 'none', opacity: s.active ? 1 : 0.55 }}
                     onMouseEnter={e => e.currentTarget.style.background = 'var(--s2)'}
                     onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
-                    <td style={{ padding: '11px 20px', fontWeight: 600, color: 'var(--t1)', fontSize: 13 }}>{s.name}</td>
+                    <td style={{ padding: '11px 20px', fontWeight: 600, color: 'var(--t1)', fontSize: 13 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        {s.name}
+                        {!s.active && <span style={{ fontSize: 9, fontWeight: 700, color: 'var(--t3)', background: 'var(--s3)', borderRadius: 5, padding: '2px 7px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Disconnected</span>}
+                      </div>
+                    </td>
                     <td style={{ padding: '11px 20px', fontFamily: "'Fira Code', monospace", fontSize: 11, color: 'var(--t2)' }}>{s.shop_domain}</td>
                     <td style={{ padding: '11px 20px' }}>
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
@@ -514,26 +535,52 @@ export default function Stores() {
                     <td style={{ padding: '11px 20px', fontSize: 12, color: 'var(--t2)' }}>{s.currency || 'EUR'}</td>
                     <td style={{ padding: '11px 20px', fontSize: 11, color: 'var(--t2)', fontFamily: "'Fira Code', monospace" }}>{fmtDate(s.connected_at)}</td>
                     <td style={{ padding: '11px 20px', textAlign: 'right' }}>
-                      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-                        <button onClick={() => syncStore(s.id, s.name)} disabled={syncingId === s.id}
-                          style={{ fontSize: 12, fontWeight: 700, color: '#fff', background: 'linear-gradient(135deg, #818CF8, #6366F1)', border: 'none', borderRadius: 8, padding: '7px 14px', cursor: 'pointer', boxShadow: 'var(--sh-brand)', opacity: syncingId === s.id ? 0.7 : 1, transition: 'transform 0.1s', display: 'inline-flex', alignItems: 'center', gap: 6 }}
-                          onMouseEnter={e => { if (syncingId !== s.id) e.currentTarget.style.transform = 'translateY(-1px)'; }}
-                          onMouseLeave={e => e.currentTarget.style.transform = 'translateY(0)'}>
-                          {syncingId === s.id && <span style={{ width: 12, height: 12, borderRadius: '50%', border: '2px solid #fff', borderTopColor: 'transparent', animation: 'spin 0.6s linear infinite', display: 'inline-block' }} />}
-                          {syncingId === s.id ? 'Syncing…' : 'Sync'}
-                        </button>
-                        <button onClick={() => setEditStore(s)}
-                          style={{ fontSize: 12, fontWeight: 600, color: 'var(--t1)', background: 'var(--s1)', border: '1px solid var(--b2)', borderRadius: 8, padding: '7px 14px', cursor: 'pointer', transition: 'all 0.12s' }}
-                          onMouseEnter={e => { e.currentTarget.style.background = 'var(--s3)'; }}
-                          onMouseLeave={e => { e.currentTarget.style.background = 'var(--s1)'; }}>
-                          Edit
-                        </button>
-                        <button onClick={() => disconnect(s.id, s.name)}
-                          style={{ fontSize: 12, fontWeight: 600, color: 'var(--t1)', background: 'var(--s1)', border: '1px solid var(--b2)', borderRadius: 8, padding: '7px 14px', cursor: 'pointer', transition: 'all 0.12s' }}
-                          onMouseEnter={e => { e.currentTarget.style.color = 'var(--red)'; e.currentTarget.style.borderColor = 'var(--red)'; e.currentTarget.style.background = 'var(--red-bg)'; }}
-                          onMouseLeave={e => { e.currentTarget.style.color = 'var(--t1)'; e.currentTarget.style.borderColor = 'var(--b2)'; e.currentTarget.style.background = 'var(--s1)'; }}>
-                          Disconnect
-                        </button>
+                      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                        {s.active ? (
+                          <>
+                            <button onClick={() => syncStore(s.id, s.name)} disabled={syncingId === s.id}
+                              style={{ fontSize: 12, fontWeight: 700, color: '#fff', background: 'linear-gradient(135deg, #818CF8, #6366F1)', border: 'none', borderRadius: 8, padding: '7px 14px', cursor: 'pointer', boxShadow: 'var(--sh-brand)', opacity: syncingId === s.id ? 0.7 : 1, transition: 'transform 0.1s', display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                              onMouseEnter={e => { if (syncingId !== s.id) e.currentTarget.style.transform = 'translateY(-1px)'; }}
+                              onMouseLeave={e => e.currentTarget.style.transform = 'translateY(0)'}>
+                              {syncingId === s.id && <span style={{ width: 12, height: 12, borderRadius: '50%', border: '2px solid #fff', borderTopColor: 'transparent', animation: 'spin 0.6s linear infinite', display: 'inline-block' }} />}
+                              {syncingId === s.id ? 'Syncing…' : 'Sync'}
+                            </button>
+                            <button onClick={() => reconnect(s.id, s.name)} disabled={syncingId === s.id}
+                              style={{ fontSize: 12, fontWeight: 600, color: 'var(--t1)', background: 'var(--s1)', border: '1px solid var(--b2)', borderRadius: 8, padding: '7px 14px', cursor: 'pointer', transition: 'all 0.12s' }}
+                              onMouseEnter={e => { e.currentTarget.style.background = 'var(--s3)'; }}
+                              onMouseLeave={e => { e.currentTarget.style.background = 'var(--s1)'; }}>
+                              Reconnect
+                            </button>
+                            <button onClick={() => setEditStore(s)}
+                              style={{ fontSize: 12, fontWeight: 600, color: 'var(--t1)', background: 'var(--s1)', border: '1px solid var(--b2)', borderRadius: 8, padding: '7px 14px', cursor: 'pointer', transition: 'all 0.12s' }}
+                              onMouseEnter={e => { e.currentTarget.style.background = 'var(--s3)'; }}
+                              onMouseLeave={e => { e.currentTarget.style.background = 'var(--s1)'; }}>
+                              Edit
+                            </button>
+                            <button onClick={() => disconnect(s.id, s.name)}
+                              style={{ fontSize: 12, fontWeight: 600, color: 'var(--t1)', background: 'var(--s1)', border: '1px solid var(--b2)', borderRadius: 8, padding: '7px 14px', cursor: 'pointer', transition: 'all 0.12s' }}
+                              onMouseEnter={e => { e.currentTarget.style.color = 'var(--red)'; e.currentTarget.style.borderColor = 'var(--red)'; e.currentTarget.style.background = 'var(--red-bg)'; }}
+                              onMouseLeave={e => { e.currentTarget.style.color = 'var(--t1)'; e.currentTarget.style.borderColor = 'var(--b2)'; e.currentTarget.style.background = 'var(--s1)'; }}>
+                              Disconnect
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button onClick={() => reconnect(s.id, s.name)} disabled={syncingId === s.id}
+                              style={{ fontSize: 12, fontWeight: 700, color: '#fff', background: 'linear-gradient(135deg, #818CF8, #6366F1)', border: 'none', borderRadius: 8, padding: '7px 14px', cursor: 'pointer', boxShadow: 'var(--sh-brand)', opacity: syncingId === s.id ? 0.7 : 1, transition: 'transform 0.1s', display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                              onMouseEnter={e => { if (syncingId !== s.id) e.currentTarget.style.transform = 'translateY(-1px)'; }}
+                              onMouseLeave={e => e.currentTarget.style.transform = 'translateY(0)'}>
+                              {syncingId === s.id && <span style={{ width: 12, height: 12, borderRadius: '50%', border: '2px solid #fff', borderTopColor: 'transparent', animation: 'spin 0.6s linear infinite', display: 'inline-block' }} />}
+                              {syncingId === s.id ? 'Reconnecting…' : 'Reconnect'}
+                            </button>
+                            <button onClick={() => removePermanently(s.id, s.name)}
+                              style={{ fontSize: 12, fontWeight: 600, color: 'var(--t1)', background: 'var(--s1)', border: '1px solid var(--b2)', borderRadius: 8, padding: '7px 14px', cursor: 'pointer', transition: 'all 0.12s' }}
+                              onMouseEnter={e => { e.currentTarget.style.color = 'var(--red)'; e.currentTarget.style.borderColor = 'var(--red)'; e.currentTarget.style.background = 'var(--red-bg)'; }}
+                              onMouseLeave={e => { e.currentTarget.style.color = 'var(--t1)'; e.currentTarget.style.borderColor = 'var(--b2)'; e.currentTarget.style.background = 'var(--s1)'; }}>
+                              Delete permanently
+                            </button>
+                          </>
+                        )}
                       </div>
                     </td>
                   </tr>

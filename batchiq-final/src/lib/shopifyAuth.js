@@ -37,7 +37,8 @@ module.exports = { getAccessToken };
 // Returns { markets: ["FI","SE"], error: null } or { markets: [], error: "reason" }.
 async function getMarkets(shopDomain, accessToken) {
   const fetch = require('node-fetch');
-  const query = `query { markets(first: 50) { nodes { name enabled regions(first: 50) { nodes { ... on MarketRegionCountry { code } } } } } }`;
+  // NOTE: do NOT request `enabled` — that field doesn't exist on Market and breaks the whole query.
+  const query = `query { markets(first: 50) { nodes { name regions(first: 100) { nodes { ... on MarketRegionCountry { code } } } } } }`;
   try {
     const res = await fetch(`https://${shopDomain}/admin/api/2025-01/graphql.json`, {
       method: 'POST',
@@ -49,12 +50,13 @@ async function getMarkets(shopDomain, accessToken) {
       const msg = Array.isArray(json.errors) ? json.errors.map(e => e.message).join('; ') : JSON.stringify(json.errors);
       return { markets: [], error: msg };
     }
-    if (!json.data?.markets) return { markets: [], error: 'No markets data returned (check read_markets scope).' };
+    if (!json.data || !json.data.markets) {
+      return { markets: [], error: 'No markets data returned (check read_markets scope on the app).' };
+    }
     const codes = new Set();
-    for (const m of json.data.markets.nodes) {
-      if (m.enabled === false) continue;
+    for (const m of (json.data.markets.nodes || [])) {
       for (const r of (m.regions?.nodes || [])) {
-        if (r.code) codes.add(r.code);
+        if (r && r.code) codes.add(r.code);
       }
     }
     return { markets: [...codes], error: null };
