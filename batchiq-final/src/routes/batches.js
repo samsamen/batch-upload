@@ -100,7 +100,7 @@ router.get('/:id', async (req, res) => {
 
 // ── POST /api/batches — create a new batch ─────────────────────────────────
 router.post('/', async (req, res) => {
-  const { name, source, thesis, validation_notes, tags, batch_tag, sub_tags, changes, changes_note } = req.body;
+  const { name, source, thesis, validation_notes, tags, batch_tag, sub_tags, changes, changes_note, store_links } = req.body;
 
   if (!name) return res.status(400).json({ error: 'name is required' });
 
@@ -121,6 +121,18 @@ router.post('/', async (req, res) => {
     .single();
 
   if (error) return res.status(500).json({ error: error.message });
+
+  // Link selected stores (store_links = [{ store_id, shopify_tag? }])
+  if (Array.isArray(store_links) && store_links.length > 0) {
+    const rows = store_links
+      .filter(l => l.store_id)
+      .map(l => ({ batch_id: data.id, store_id: l.store_id, shopify_tag: l.shopify_tag || null }));
+    if (rows.length > 0) {
+      const { error: linkErr } = await supabase.from('biq_batch_stores').insert(rows);
+      if (linkErr) console.error('Store link error:', linkErr.message);
+    }
+  }
+
   res.status(201).json(data);
 });
 
@@ -214,16 +226,16 @@ router.get('/:id/suggest-tag', async (req, res) => {
 
 // ── POST /api/batches/:id/stores — add a store assignment ─────────────────
 router.post('/:id/stores', async (req, res) => {
-  const { store_id, shopify_tag, product_count, notes } = req.body;
+  const { store_id, shopify_tag, notes } = req.body;
 
-  if (!store_id || !shopify_tag)
-    return res.status(400).json({ error: 'store_id and shopify_tag are required' });
+  if (!store_id)
+    return res.status(400).json({ error: 'store_id is required' });
 
   const { data, error } = await supabase
     .from('biq_batch_stores')
-    .insert({ batch_id: req.params.id, store_id, shopify_tag, product_count: product_count || 0, notes })
+    .insert({ batch_id: req.params.id, store_id, shopify_tag: shopify_tag || null, notes: notes || null })
     .select(`
-      id, shopify_tag, product_count, notes,
+      id, shopify_tag, notes,
       biq_stores ( id, name, shop_domain, country )
     `)
     .single();
@@ -234,11 +246,14 @@ router.post('/:id/stores', async (req, res) => {
 
 // ── PATCH /api/batches/:batchId/stores/:bsId — update store assignment ─────
 router.patch('/:batchId/stores/:bsId', async (req, res) => {
-  const { shopify_tag, product_count, notes } = req.body;
+  const { shopify_tag, notes } = req.body;
+  const update = {};
+  if (shopify_tag !== undefined) update.shopify_tag = shopify_tag || null;
+  if (notes !== undefined) update.notes = notes;
 
   const { data, error } = await supabase
     .from('biq_batch_stores')
-    .update({ shopify_tag, product_count, notes })
+    .update(update)
     .eq('id', req.params.bsId)
     .eq('batch_id', req.params.batchId)
     .select()

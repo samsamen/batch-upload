@@ -14,7 +14,7 @@ function Label({ children }) {
 
 function Btn({ children, onClick, disabled, variant = 'ghost', size = 'md' }) {
   const v = {
-    primary: { background: 'linear-gradient(135deg, #7C5CFC, #5B5BD6)', color: '#fff', border: 'none', boxShadow: 'var(--sh-brand)', fontWeight: 700 },
+    primary: { background: 'linear-gradient(135deg, #818CF8, #6366F1)', color: '#fff', border: 'none', boxShadow: 'var(--sh-brand)', fontWeight: 700 },
     ghost:   { background: 'var(--s1)', color: 'var(--t1)', border: '1px solid var(--b2)', fontWeight: 600 },
     danger:  { background: 'var(--red-bg)', color: 'var(--red)', border: '1px solid var(--red)', fontWeight: 600 },
   };

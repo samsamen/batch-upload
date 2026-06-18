@@ -25,8 +25,8 @@
   --t4:       #C4CCD8;
 
   /* Brand — indigo/violet primary */
-  --brand:      #5B5BD6;
-  --brand-d:    #4A4AC4;
+  --brand:      #6366F1;
+  --brand-d:    #4F46E5;
   --brand-l:    #EEEEFB;
   --brand-glow: rgba(91,91,214,0.16);
 
@@ -58,7 +58,7 @@
   --sh-md:  0 2px 8px rgba(16,24,40,0.06), 0 1px 2px rgba(16,24,40,0.04);
   --sh-lg:  0 12px 32px rgba(16,24,40,0.10), 0 2px 6px rgba(16,24,40,0.05);
   --sh-xl:  0 24px 64px rgba(16,24,40,0.16);
-  --sh-brand: 0 4px 14px rgba(91,91,214,0.25);
+  --sh-brand: 0 4px 14px rgba(99,102,241,0.3);
 
   --ring: 0 0 0 3px var(--brand-glow);
 }

@@ -38,3 +38,6 @@ CREATE TABLE IF NOT EXISTS biq_research (
   created_at    TIMESTAMPTZ DEFAULT NOW(),
   updated_at    TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Sub-tag is optional on batch-store assignments
+ALTER TABLE biq_batch_stores ALTER COLUMN shopify_tag DROP NOT NULL;

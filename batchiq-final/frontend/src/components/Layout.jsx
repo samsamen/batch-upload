@@ -17,7 +17,7 @@ export default function Layout({ children }) {
         <div style={{ padding: '22px 20px 20px', display: 'flex', alignItems: 'center', gap: 11 }}>
           <div style={{
             width: 34, height: 34, borderRadius: 9,
-            background: 'linear-gradient(135deg, #7C5CFC 0%, #5B5BD6 100%)',
+            background: 'linear-gradient(135deg, #818CF8 0%, #6366F1 100%)',
             display: 'flex', alignItems: 'flex-end', justifyContent: 'center',
             gap: 2, padding: '7px 6px', boxShadow: 'var(--sh-brand)',
           }}>

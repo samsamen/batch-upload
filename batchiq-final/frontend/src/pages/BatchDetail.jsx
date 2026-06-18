@@ -85,7 +85,7 @@ function Btn({ children, onClick, disabled, variant = 'ghost' }) {
 function AddStoreModal({ batchId, batchTag, onClose, onAdd }) {
   const [stores, setStores]         = useState([]);
   const [loadingStores, setLS]      = useState(true);
-  const [form, setForm]             = useState({ store_id: '', shopify_tag: '', product_count: '', notes: '' });
+  const [form, setForm]             = useState({ store_id: '', shopify_tag: '', notes: '' });
   const [loading, setLoading]       = useState(false);
   const [error, setError]           = useState(null);
 
@@ -104,15 +104,14 @@ function AddStoreModal({ batchId, batchTag, onClose, onAdd }) {
   const set = k => e => setForm(f => ({ ...f, [k]: e.target.value }));
 
   async function submit() {
-    if (!form.store_id || !form.shopify_tag.trim()) {
-      setError('Select a store and confirm the sub-tag.'); return;
+    if (!form.store_id) {
+      setError('Select a store.'); return;
     }
     setLoading(true); setError(null);
     try {
       const bs = await api.post(`/api/batches/${batchId}/stores`, {
         store_id: form.store_id,
-        shopify_tag: form.shopify_tag.trim(),
-        product_count: parseInt(form.product_count) || 0,
+        shopify_tag: form.shopify_tag.trim() || null,
         notes: form.notes,
       });
       onAdd(bs); onClose();
@@ -121,29 +120,29 @@ function AddStoreModal({ batchId, batchTag, onClose, onAdd }) {
 
   return (
     <div style={{
-      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)',
+      position: 'fixed', inset: 0, background: 'rgba(15,20,35,0.5)', backdropFilter: 'blur(4px)',
       display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100,
     }}>
       <div style={{
         background: 'var(--s1)', border: '1px solid var(--b2)',
-        borderRadius: 6, width: 460, padding: 26,
-        boxShadow: '0 24px 64px rgba(0,0,0,0.6)',
+        borderRadius: 14, width: 460, padding: 26,
+        boxShadow: 'var(--sh-xl)',
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-          <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--t1)' }}>Add store to batch</div>
-          <button onClick={onClose} style={{ background: 'none', color: 'var(--t2)', fontSize: 18, lineHeight: 1 }}>×</button>
+          <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--t1)' }}>Add store to batch</div>
+          <button onClick={onClose} style={{ width: 30, height: 30, borderRadius: 8, color: 'var(--t3)', background: 'var(--s2)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>✕</button>
         </div>
 
         {error && (
           <div style={{
-            background: 'rgba(239,80,80,0.08)', border: '1px solid rgba(239,80,80,0.25)',
-            borderRadius: 4, padding: '8px 12px', marginBottom: 14, fontSize: 12, color: 'var(--red)',
+            background: 'var(--red-bg)', border: '1px solid var(--red)',
+            borderRadius: 9, padding: '9px 13px', marginBottom: 14, fontSize: 12.5, color: 'var(--red)', fontWeight: 600,
           }}>
             {error}
           </div>
         )}
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 13 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <div>
             <Label>Store</Label>
             <select value={form.store_id} onChange={handleStoreSelect} disabled={loadingStores}>
@@ -158,41 +157,19 @@ function AddStoreModal({ batchId, batchTag, onClose, onAdd }) {
           </div>
 
           <div>
-            <Label>Store sub-tag</Label>
+            <Label>Store sub-tag <span style={{ color: 'var(--t4)', fontWeight: 500, textTransform: 'none', letterSpacing: 0 }}>(optional)</span></Label>
             <input
-              placeholder={batchTag ? `${batchTag}-fi` : 'e.g. b20-fi'}
+              placeholder={batchTag ? `${batchTag}-fi` : 'optional'}
               value={form.shopify_tag}
               onChange={set('shopify_tag')}
               style={{ fontFamily: "'Fira Code', monospace", fontSize: 13 }}
             />
           </div>
 
-          {/* Tag checklist */}
-          {batchTag && form.shopify_tag && (
-            <div style={{
-              background: 'var(--brand-l)', border: '1px solid var(--brand-l)',
-              borderRadius: 4, padding: '10px 14px',
-            }}>
-              <Label style={{ marginBottom: 8 }}>Apply both tags to each product in this store</Label>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <TagRow tag={batchTag} note="Parent — all products in this batch" />
-                <TagRow tag={form.shopify_tag} note="Sub-tag — tracked per store by this system" />
-              </div>
-            </div>
-          )}
-
           <div>
-            <Label>Number of products</Label>
-            <input
-              type="number" min="0" placeholder="0"
-              value={form.product_count} onChange={set('product_count')}
-            />
-          </div>
-
-          <div>
-            <Label>Notes</Label>
+            <Label>Notes <span style={{ color: 'var(--t4)', fontWeight: 500, textTransform: 'none', letterSpacing: 0 }}>(optional)</span></Label>
             <textarea
-              rows={2} placeholder="e.g. 3 dresses + 2 accessories for Finnish market"
+              rows={2} placeholder="e.g. 3 dresses + 2 accessories"
               value={form.notes} onChange={set('notes')}
               style={{ resize: 'vertical' }}
             />
@@ -461,7 +438,7 @@ export default function BatchDetail() {
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ borderBottom: '1px solid var(--b1)' }}>
-                  {['Store', 'Sub-tag', 'Products', 'Revenue', 'Orders', 'Units', ''].map(h => (
+                  {['Store', 'Sub-tag', 'Revenue', 'Orders', 'Units', ''].map(h => (
                     <th key={h} style={{
                       padding: '8px 20px', textAlign: 'left',
                       fontSize: 9, fontWeight: 600, color: 'var(--t3)',
@@ -490,13 +467,12 @@ export default function BatchDetail() {
                       )}
                     </td>
                     <td style={{ padding: '12px 20px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-                        <TagChip tag={bs.shopify_tag} />
-                        <CopyButton value={bs.shopify_tag} />
-                      </div>
-                    </td>
-                    <td style={{ padding: '12px 20px', fontFamily: "'Fira Code', monospace", fontSize: 12, color: 'var(--t2)' }}>
-                      {bs.product_count || 0}
+                      {bs.shopify_tag ? (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                          <TagChip tag={bs.shopify_tag} />
+                          <CopyButton value={bs.shopify_tag} />
+                        </div>
+                      ) : <span style={{ fontSize: 11, color: 'var(--t3)' }}>—</span>}
                     </td>
                     <td style={{ padding: '12px 20px', fontFamily: "'Fira Code', monospace", fontSize: 13, fontWeight: 500, color: bs.totals.revenue > 0 ? 'var(--brand)' : 'var(--t3)' }}>
                       {fmtCurrency(bs.totals.revenue)}

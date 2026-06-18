@@ -20,7 +20,7 @@ function Label({ children }) {
 
 function Btn({ children, onClick, disabled, variant = 'ghost', size = 'md' }) {
   const variants = {
-    primary: { background: 'linear-gradient(135deg, #7C5CFC, #5B5BD6)', color: '#fff', border: 'none', boxShadow: 'var(--sh-brand)', fontWeight: 700 },
+    primary: { background: 'linear-gradient(135deg, #818CF8, #6366F1)', color: '#fff', border: 'none', boxShadow: 'var(--sh-brand)', fontWeight: 700 },
     ghost:   { background: 'var(--s1)', color: 'var(--t1)', border: '1px solid var(--b2)', fontWeight: 600 },
     subtle:  { background: 'var(--s2)', color: 'var(--t2)', border: '1px solid var(--b1)', fontWeight: 600 },
     danger:  { background: 'var(--red-bg)', color: 'var(--red)', border: '1px solid var(--red)', fontWeight: 600 },
@@ -142,17 +142,30 @@ function BatchModal({ mode, batch, onClose, onSaved }) {
   const [subTags, setSubTags] = useState(batch?.sub_tags || []);
   const [changes, setChanges] = useState(batch?.changes || []);
   const [suggestion, setSuggestion] = useState(null);
+  const [stores, setStores] = useState([]);
+  const [storeLinks, setStoreLinks] = useState({}); // { store_id: { selected, shopify_tag } }
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const set = (k) => (e) => setForm(f => ({ ...f, [k]: e.target.value }));
 
   useEffect(() => {
+    api.get('/api/stores').then(setStores).catch(() => {});
     if (isEdit) return;
     api.get('/api/batches/suggest-name').then(d => {
       setSuggestion(d);
       if (d.suggested_name || d.suggested_tag) setForm(f => ({ ...f, name: d.suggested_name || f.name, batch_tag: d.suggested_tag || f.batch_tag }));
     }).catch(() => {});
   }, []);
+
+  function toggleStore(id) {
+    setStoreLinks(prev => {
+      const cur = prev[id] || { selected: false, shopify_tag: '' };
+      return { ...prev, [id]: { ...cur, selected: !cur.selected } };
+    });
+  }
+  function setStoreTag(id, tag) {
+    setStoreLinks(prev => ({ ...prev, [id]: { ...(prev[id] || { selected: true }), selected: true, shopify_tag: tag } }));
+  }
 
   const toggleChange = (o) => setChanges(p => p.includes(o) ? p.filter(c => c !== o) : [...p, o]);
   const addSub = () => setSubTags(p => [...p, { tag: '', description: '' }]);
@@ -166,6 +179,12 @@ function BatchModal({ mode, batch, onClose, onSaved }) {
       const tags = form.tags.split(',').map(t => t.trim()).filter(Boolean);
       const sub = subTags.filter(s => s.tag.trim()).map(s => ({ tag: s.tag.trim(), description: s.description.trim() }));
       const payload = { ...form, batch_tag: form.batch_tag.trim() || null, tags, sub_tags: sub, changes };
+      // On create, attach selected stores
+      if (!isEdit) {
+        payload.store_links = Object.entries(storeLinks)
+          .filter(([, v]) => v.selected)
+          .map(([store_id, v]) => ({ store_id, shopify_tag: v.shopify_tag?.trim() || null }));
+      }
       const saved = isEdit
         ? await api.patch(`/api/batches/${batch.id}`, payload)
         : await api.post('/api/batches', payload);
@@ -229,6 +248,50 @@ function BatchModal({ mode, batch, onClose, onSaved }) {
           <div><Label>Thesis</Label><textarea rows={2} placeholder="Why you think this will perform." value={form.thesis} onChange={set('thesis')} style={{ resize: 'vertical' }} /></div>
           <div><Label>Validation</Label><textarea rows={2} placeholder="Social proof, competitor signals, trends." value={form.validation_notes} onChange={set('validation_notes')} style={{ resize: 'vertical' }} /></div>
           <div><Label>Labels (comma-separated)</Label><input placeholder="summer, impulse-buy, fashion" value={form.tags} onChange={set('tags')} /></div>
+
+          {/* Store selection — only when creating */}
+          {!isEdit && (
+            <div>
+              <Label>Push to stores <span style={{ color: 'var(--t4)', fontWeight: 500, textTransform: 'none', letterSpacing: 0 }}>— select where this batch goes</span></Label>
+              {stores.length === 0 ? (
+                <div style={{ fontSize: 11.5, color: 'var(--t3)', fontStyle: 'italic' }}>No stores connected yet. Add them on the Stores page.</div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+                  {stores.map(s => {
+                    const link = storeLinks[s.id] || {};
+                    return (
+                      <div key={s.id} style={{
+                        display: 'flex', alignItems: 'center', gap: 10, padding: '8px 11px', borderRadius: 9,
+                        background: link.selected ? 'var(--brand-l)' : 'var(--s2)',
+                        border: '1px solid ' + (link.selected ? 'var(--brand)' : 'var(--b1)'), transition: 'all 0.12s',
+                      }}>
+                        <div onClick={() => toggleStore(s.id)} style={{
+                          width: 18, height: 18, borderRadius: 5, cursor: 'pointer', flexShrink: 0,
+                          border: '1.5px solid ' + (link.selected ? 'var(--brand)' : 'var(--b3)'),
+                          background: link.selected ? 'var(--brand)' : 'transparent',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        }}>
+                          {link.selected && <svg width="11" height="11" viewBox="0 0 11 11" fill="none"><path d="M2 5.5L4.5 8L9 3" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+                        </div>
+                        <div onClick={() => toggleStore(s.id)} style={{ flex: 1, cursor: 'pointer', minWidth: 0 }}>
+                          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--t1)' }}>{s.name}</div>
+                          {s.markets?.length > 0 && <div style={{ fontSize: 10.5, color: 'var(--t3)', fontFamily: "'Fira Code', monospace" }}>{s.markets.join(', ')}</div>}
+                        </div>
+                        {link.selected && (
+                          <input
+                            placeholder="sub-tag (optional)"
+                            value={link.shopify_tag || ''}
+                            onChange={e => setStoreTag(s.id, e.target.value)}
+                            style={{ width: 150, fontFamily: "'Fira Code', monospace", fontSize: 11.5, padding: '6px 9px' }}
+                          />
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         <div style={{ padding: '16px 26px', borderTop: '1px solid var(--b1)', display: 'flex', gap: 10, justifyContent: 'flex-end', position: 'sticky', bottom: 0, background: 'var(--s1)', borderRadius: '0 0 16px 16px' }}>
@@ -269,7 +332,7 @@ function BatchRow({ batch, rank, maxRevenue, selected, onSelect, onAction, onOpe
       <div style={{ textAlign: 'right', fontFamily: "'Fira Code', monospace", fontSize: 12.5, fontWeight: 600, color: roas ? (roas >= 2 ? 'var(--green)' : 'var(--amber)') : 'var(--t4)' }}>{roas ? `${roas.toFixed(1)}×` : '—'}</div>
       <div style={{ padding: '0 2px' }}>
         <div style={{ height: 5, background: 'var(--s3)', borderRadius: 3, overflow: 'hidden' }}>
-          <div style={{ height: '100%', width: `${barPct}%`, background: 'linear-gradient(90deg, #7C5CFC, #5B5BD6)', borderRadius: 3, transition: 'width 0.4s ease' }} />
+          <div style={{ height: '100%', width: `${barPct}%`, background: 'linear-gradient(90deg, #818CF8, #6366F1)', borderRadius: 3, transition: 'width 0.4s ease' }} />
         </div>
       </div>
       <div><StatusDot status={batch.status} /></div>
@@ -384,10 +447,14 @@ export default function Dashboard() {
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14, marginBottom: 22 }}>
-          <StatCard label="Active batches" value={activeCount} accent="var(--c-violet)" />
-          <StatCard label="Revenue" value={fmtCurrency(totalRevenue)} accent="var(--c-emerald)" mono />
-          <StatCard label="Orders" value={totalOrders} accent="var(--c-blue)" mono />
-          <StatCard label="Blended ROAS" value={blendedRoas ? `${blendedRoas.toFixed(2)}×` : '—'} accent="var(--c-amber)" mono />
+          <StatCard label="Active batches" value={activeCount} accent="var(--c-violet)"
+            icon={<svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect x="2.5" y="2.5" width="6" height="6" rx="1.5" stroke="currentColor" strokeWidth="1.6"/><rect x="11.5" y="2.5" width="6" height="6" rx="1.5" stroke="currentColor" strokeWidth="1.6"/><rect x="2.5" y="11.5" width="6" height="6" rx="1.5" stroke="currentColor" strokeWidth="1.6"/><rect x="11.5" y="11.5" width="6" height="6" rx="1.5" stroke="currentColor" strokeWidth="1.6"/></svg>} />
+          <StatCard label="Revenue" value={fmtCurrency(totalRevenue)} accent="var(--c-emerald)" mono
+            icon={<svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M10 2v16M6 5h6a2.5 2.5 0 0 1 0 5H7a2.5 2.5 0 0 0 0 5h7" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/></svg>} />
+          <StatCard label="Orders" value={totalOrders} accent="var(--c-blue)" mono
+            icon={<svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M3 5h2l1.5 9h8L16 7H5.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/><circle cx="7.5" cy="16.5" r="1" fill="currentColor"/><circle cx="13.5" cy="16.5" r="1" fill="currentColor"/></svg>} />
+          <StatCard label="Blended ROAS" value={blendedRoas ? `${blendedRoas.toFixed(2)}×` : '—'} accent="var(--c-amber)" mono
+            icon={<svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M3 14l4-4 3 3 6-7" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/><path d="M12 6h4v4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/></svg>} />
         </div>
 
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12, marginBottom: 16 }}>
@@ -470,12 +537,16 @@ export default function Dashboard() {
   );
 }
 
-function StatCard({ label, value, accent, mono }) {
+function StatCard({ label, value, accent, mono, icon }) {
   return (
-    <div style={{ background: 'var(--s1)', border: '1px solid var(--b1)', borderRadius: 13, padding: '16px 18px', boxShadow: 'var(--sh-sm)', position: 'relative', overflow: 'hidden' }}>
-      <div style={{ position: 'absolute', top: 0, left: 0, width: 3, height: '100%', background: accent }} />
-      <div style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 7 }}>{label}</div>
-      <div style={{ fontSize: 24, fontWeight: 800, color: 'var(--t1)', letterSpacing: '-0.02em', fontFamily: mono ? "'Fira Code', monospace" : 'inherit' }}>{value}</div>
+    <div style={{ background: 'var(--s1)', border: '1px solid var(--b1)', borderRadius: 14, padding: '18px 20px', boxShadow: 'var(--sh-sm)', display: 'flex', alignItems: 'center', gap: 14 }}>
+      <div style={{ width: 42, height: 42, borderRadius: 11, background: `color-mix(in srgb, ${accent} 14%, transparent)`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: accent }}>
+        {icon}
+      </div>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 3 }}>{label}</div>
+        <div style={{ fontSize: 23, fontWeight: 800, color: 'var(--t1)', letterSpacing: '-0.02em', fontFamily: mono ? "'Fira Code', monospace" : 'inherit', lineHeight: 1.1 }}>{value}</div>
+      </div>
     </div>
   );
 }
