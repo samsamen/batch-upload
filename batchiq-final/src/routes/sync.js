@@ -1,6 +1,8 @@
 const express = require('express');
 const supabase = require('../lib/supabase');
 const { getProductsByTag, getOrdersForRange, calcPerformance } = require('../lib/shopifyApi');
+const { getAccessToken } = require('../lib/shopifyAuth');
+const { getConfig } = require('./config');
 
 const router = express.Router();
 
@@ -8,6 +10,18 @@ const router = express.Router();
 async function syncBatchStore(batchStore, fromDate, toDate) {
   const store = batchStore.biq_stores;
   const { id: bsId, shopify_tag } = batchStore;
+
+  // Refresh access token (client credentials tokens expire after 24h)
+  try {
+    const cfg = await getConfig();
+    if (cfg.shopify_client_id && cfg.shopify_client_secret) {
+      store.access_token = await getAccessToken(
+        store.shop_domain, cfg.shopify_client_id, cfg.shopify_client_secret
+      );
+    }
+  } catch (err) {
+    throw new Error(`Token refresh failed for ${store.shop_domain}: ${err.message}`);
+  }
 
   // 1. Get product IDs with this tag from the store
   let productIds = [];

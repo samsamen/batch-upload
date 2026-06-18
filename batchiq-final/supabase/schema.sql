@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS biq_stores (
   access_token  TEXT NOT NULL,
   country       TEXT,
   currency      TEXT DEFAULT 'EUR',
+  feed_language TEXT,
   active        BOOLEAN DEFAULT true,
   connected_at  TIMESTAMPTZ DEFAULT NOW()
 );
