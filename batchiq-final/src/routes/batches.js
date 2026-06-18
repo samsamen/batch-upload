@@ -48,31 +48,54 @@ router.get('/', async (req, res) => {
       biq_batch_stores (
         id, shopify_tag, product_count, product_count_active, product_count_draft, product_count_archived, notes,
         biq_stores ( id, name, shop_domain, country, currency, markets ),
-        biq_performance_daily ( date, orders, revenue, units_sold, ad_spend )
+        biq_performance_daily ( date, orders, revenue, units_sold ),
+        biq_ad_spend_daily ( date, cost, clicks, impressions )
       )
     `)
     .order('created_at', { ascending: false });
 
   if (error) return res.status(500).json({ error: error.message });
 
-  // Aggregate totals per batch (respecting date range)
+  // Aggregate totals per batch (respecting date range) + per-store rollups
   const enriched = (batches || []).map((batch) => {
-    let totalOrders = 0, totalRevenue = 0, totalUnits = 0, totalSpend = 0;
+    let totalOrders = 0, totalRevenue = 0, totalUnits = 0, totalSpend = 0, totalClicks = 0, totalImpr = 0;
     const storeCount = batch.biq_batch_stores?.length || 0;
 
     for (const bs of batch.biq_batch_stores || []) {
+      // Per-store revenue/orders/units
+      let sRev = 0, sOrd = 0, sUnits = 0;
       for (const perf of bs.biq_performance_daily || []) {
         if (cutoff && perf.date < cutoff) continue;
-        totalOrders += perf.orders || 0;
-        totalRevenue += parseFloat(perf.revenue || 0);
-        totalUnits += perf.units_sold || 0;
-        totalSpend += parseFloat(perf.ad_spend || 0);
+        sOrd += perf.orders || 0;
+        sRev += parseFloat(perf.revenue || 0);
+        sUnits += perf.units_sold || 0;
       }
+      // Per-store spend/clicks/impressions (from biq_ad_spend_daily)
+      let sSpend = 0, sClicks = 0, sImpr = 0;
+      for (const ad of bs.biq_ad_spend_daily || []) {
+        if (cutoff && ad.date < cutoff) continue;
+        sSpend += parseFloat(ad.cost || 0);
+        sClicks += ad.clicks || 0;
+        sImpr += ad.impressions || 0;
+      }
+      // Attach a compact rollup right on the store so the overview can show it inline
+      bs.rollup = {
+        revenue: sRev, orders: sOrd, units: sUnits,
+        spend: sSpend, clicks: sClicks, impressions: sImpr,
+        roas: sSpend > 0 ? sRev / sSpend : null,
+        ctr: sImpr > 0 ? (sClicks / sImpr) * 100 : null,
+      };
+
+      totalOrders += sOrd; totalRevenue += sRev; totalUnits += sUnits;
+      totalSpend += sSpend; totalClicks += sClicks; totalImpr += sImpr;
     }
+
+    const roas = totalSpend > 0 ? totalRevenue / totalSpend : null;
+    const ctr = totalImpr > 0 ? (totalClicks / totalImpr) * 100 : null;
 
     return {
       ...batch,
-      totals: { orders: totalOrders, revenue: totalRevenue, units: totalUnits, ad_spend: totalSpend },
+      totals: { orders: totalOrders, revenue: totalRevenue, units: totalUnits, ad_spend: totalSpend, roas, ctr, clicks: totalClicks, impressions: totalImpr },
       store_count: storeCount,
     };
   });

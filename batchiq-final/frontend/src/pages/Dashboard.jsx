@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, fmtCurrency, fmtDate } from '../api.js';
+import BatchRichContent from '../components/BatchRichContent.jsx';
 
 const SOURCES = ['AliExpress spy', 'Competitor store', 'TikTok trend', 'Google Trends', 'Manual research', 'Supplier suggestion', 'Other'];
 const CHANGE_OPTIONS = ['Pricing changed', 'Only branding changed', 'Used own template', 'Added creatives', 'Changed all creatives', 'Nothing changed'];
@@ -52,6 +53,16 @@ function Btn({ children, onClick, disabled, variant = 'ghost', size = 'md', load
 
 function TagChip({ tag }) {
   return <span style={{ display: 'inline-block', fontFamily: "'Fira Code', monospace", fontSize: 11, fontWeight: 600, color: 'var(--brand)', background: 'var(--brand-l)', border: '1px solid transparent', borderRadius: 5, padding: '2px 8px', whiteSpace: 'nowrap' }}>{tag}</span>;
+}
+
+function CopyButton({ value }) {
+  const [done, setDone] = useState(false);
+  return (
+    <button onClick={(e) => { e.stopPropagation(); navigator.clipboard?.writeText(value); setDone(true); setTimeout(() => setDone(false), 1200); }}
+      style={{ fontSize: 10, fontWeight: 700, color: done ? 'var(--green)' : 'var(--brand)', background: done ? 'var(--green-bg)' : 'var(--brand-l)', border: 'none', borderRadius: 5, padding: '2px 8px', cursor: 'pointer' }}>
+      {done ? '✓ Copied' : 'Copy'}
+    </button>
+  );
 }
 
 function StageBadge({ stage }) {
@@ -426,19 +437,34 @@ function BatchModal({ mode, batch, onClose, onSaved }) {
 // ═══ Batch Row (no longer a Link) ═════════════════════════════════════════════
 function BatchRow({ batch, rank, maxRevenue, selected, onSelect, onAction, expanded, onToggle, onSync, syncing }) {
   const [hover, setHover] = useState(false);
+  const [detail, setDetail] = useState(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [range, setRange] = useState('all');
   const revenue = batch.totals?.revenue || 0;
   const orders = batch.totals?.orders || 0;
   const adSpend = batch.totals?.ad_spend || 0;
-  const roas = adSpend > 0 ? (revenue / adSpend) : null;
+  const roas = batch.totals?.roas ?? (adSpend > 0 ? (revenue / adSpend) : null);
   const barPct = maxRevenue > 0 ? (revenue / maxRevenue) * 100 : 0;
   const stores = batch.biq_batch_stores || [];
   const totalProducts = stores.reduce((s, bs) => s + (bs.product_count || 0), 0);
+
+  // When expanded, fetch the FULL detail (rollups, spend, CTR, markets) — same data the detail page uses
+  useEffect(() => {
+    if (!expanded) return;
+    let cancelled = false;
+    setDetailLoading(true);
+    api.get(`/api/batches/${batch.id}?range=${range}`)
+      .then(d => { if (!cancelled) setDetail(d); })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setDetailLoading(false); });
+    return () => { cancelled = true; };
+  }, [expanded, batch.id, range, syncing]);
 
   return (
     <div style={{ borderBottom: '1px solid var(--b1)', background: selected ? 'var(--brand-l)' : expanded ? 'var(--s2)' : 'transparent', transition: 'background 0.12s' }}>
       {/* Main row */}
       <div onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
-        style={{ display: 'grid', gridTemplateColumns: '38px 30px 38px 100px 1fr 110px 110px 56px 80px 90px 100px', alignItems: 'center', gap: 12, padding: '13px 20px', background: hover && !expanded && !selected ? 'var(--s2)' : 'transparent', transition: 'background 0.12s' }}>
+        style={{ display: 'grid', gridTemplateColumns: '38px 30px 38px 100px 1fr 110px 100px 90px 56px 80px 90px 100px', alignItems: 'center', gap: 12, padding: '13px 20px', background: hover && !expanded && !selected ? 'var(--s2)' : 'transparent', transition: 'background 0.12s' }}>
         <Checkbox checked={selected} onChange={onSelect} />
         {/* Expand chevron */}
         <button onClick={onToggle} style={{ width: 26, height: 26, borderRadius: 7, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--t2)', background: expanded ? 'var(--s3)' : 'transparent', cursor: 'pointer', transition: 'all 0.12s' }}>
@@ -446,14 +472,16 @@ function BatchRow({ batch, rank, maxRevenue, selected, onSelect, onAction, expan
         </button>
         <RankBadge rank={rank} />
         <div>{batch.batch_tag ? <TagChip tag={batch.batch_tag} /> : <span style={{ fontFamily: "'Fira Code', monospace", fontSize: 10.5, color: 'var(--t4)' }}>{batch.batch_code}</span>}</div>
-        <div style={{ minWidth: 0, cursor: 'pointer' }} onClick={onToggle}>
+        <div style={{ minWidth: 0, cursor: 'pointer' }} onClick={onToggle} title="Expand details">
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
             <div style={{ fontWeight: 700, color: 'var(--t1)', fontSize: 13.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{batch.name}</div>
+            <span onClick={e => e.stopPropagation()}><CopyButton value={batch.name} /></span>
             <StageBadge stage={batch.stage} />
           </div>
           {batch.thesis && <div style={{ fontSize: 11.5, color: 'var(--t2)', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{batch.thesis}</div>}
         </div>
         <div style={{ textAlign: 'right', fontFamily: "'Fira Code', monospace", fontSize: 14, fontWeight: 600, color: revenue > 0 ? 'var(--t1)' : 'var(--t4)' }}>{fmtCurrency(revenue)}</div>
+        <div style={{ textAlign: 'right', fontFamily: "'Fira Code', monospace", fontSize: 13, color: adSpend > 0 ? 'var(--t2)' : 'var(--t4)' }}>{fmtCurrency(adSpend)}</div>
         <div style={{ textAlign: 'right', fontFamily: "'Fira Code', monospace", fontSize: 13, color: 'var(--t2)' }}>{orders} ord</div>
         <div style={{ textAlign: 'right', fontFamily: "'Fira Code', monospace", fontSize: 12.5, fontWeight: 600, color: roas ? (roas >= 2 ? 'var(--green)' : 'var(--amber)') : 'var(--t4)' }}>{roas ? `${roas.toFixed(1)}×` : '—'}</div>
         <div style={{ padding: '0 2px' }}>
@@ -465,63 +493,80 @@ function BatchRow({ batch, rank, maxRevenue, selected, onSelect, onAction, expan
         <div style={{ display: 'flex', justifyContent: 'flex-end' }}><ActionMenu batch={batch} onAction={onAction} /></div>
       </div>
 
-      {/* Expanded panel */}
+      {/* Always-visible per-store performance rows (no expand needed) */}
+      {stores.length > 0 && (
+        <div style={{ padding: '0 20px 12px 68px' }}>
+          <div style={{ border: '1px solid var(--b1)', borderRadius: 10, overflow: 'hidden' }}>
+            {/* mini header */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 90px 90px 70px 70px 70px 70px 1.6fr', gap: 8, padding: '7px 12px', background: 'var(--s2)', fontSize: 9, fontWeight: 700, color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              <div>Store</div>
+              <div style={{ textAlign: 'right' }}>Revenue</div>
+              <div style={{ textAlign: 'right' }}>Spend</div>
+              <div style={{ textAlign: 'right' }}>ROAS</div>
+              <div style={{ textAlign: 'right' }}>CTR</div>
+              <div style={{ textAlign: 'right' }}>Orders</div>
+              <div style={{ textAlign: 'right' }}>Units</div>
+              <div style={{ paddingLeft: 10 }}>Products / Markets</div>
+            </div>
+            {stores.map((bs, i) => {
+              const r = bs.rollup || {};
+              const rev = r.revenue || 0, spend = r.spend || 0;
+              const roas = r.roas, ctr = r.ctr;
+              const mk = bs.biq_stores?.markets || [];
+              return (
+                <div key={bs.id} style={{ display: 'grid', gridTemplateColumns: '1.4fr 90px 90px 70px 70px 70px 70px 1.6fr', gap: 8, padding: '9px 12px', borderTop: '1px solid var(--b1)', alignItems: 'center', background: 'var(--s1)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
+                    <span style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--t1)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{bs.biq_stores?.name || '—'}</span>
+                    {bs.shopify_tag && <TagChip tag={bs.shopify_tag} />}
+                  </div>
+                  <div style={{ textAlign: 'right', fontFamily: "'Fira Code', monospace", fontSize: 12.5, fontWeight: 600, color: rev > 0 ? 'var(--green)' : 'var(--t4)' }}>{fmtCurrency(rev)}</div>
+                  <div style={{ textAlign: 'right', fontFamily: "'Fira Code', monospace", fontSize: 12.5, color: spend > 0 ? 'var(--t1)' : 'var(--t4)' }}>{fmtCurrency(spend)}</div>
+                  <div style={{ textAlign: 'right', fontFamily: "'Fira Code', monospace", fontSize: 12.5, fontWeight: 700, color: (roas != null) ? (roas >= 2 ? 'var(--green)' : 'var(--amber)') : 'var(--t4)' }}>{roas != null ? `${roas.toFixed(2)}×` : '—'}</div>
+                  <div style={{ textAlign: 'right', fontFamily: "'Fira Code', monospace", fontSize: 12, color: 'var(--t2)' }}>{ctr != null ? `${ctr.toFixed(1)}%` : '—'}</div>
+                  <div style={{ textAlign: 'right', fontFamily: "'Fira Code', monospace", fontSize: 12, color: 'var(--t2)' }}>{r.orders || 0}</div>
+                  <div style={{ textAlign: 'right', fontFamily: "'Fira Code', monospace", fontSize: 12, color: 'var(--t2)' }}>{r.units || 0}</div>
+                  <div style={{ paddingLeft: 10, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', minWidth: 0 }}>
+                    <span style={{ display: 'inline-flex', gap: 4 }}>
+                      <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--green)' }}>{bs.product_count_active || 0}A</span>
+                      <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--amber)' }}>{bs.product_count_draft || 0}D</span>
+                      <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--t3)' }}>{bs.product_count_archived || 0}Ar</span>
+                    </span>
+                    <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
+                      {mk.slice(0, 6).map(m => <span key={m} style={{ fontFamily: "'Fira Code', monospace", fontSize: 9.5, fontWeight: 600, padding: '1px 5px', borderRadius: 4, background: 'var(--brand-l)', color: 'var(--brand)' }}>{m}</span>)}
+                      {mk.length > 6 && <span style={{ fontSize: 9.5, color: 'var(--t3)' }}>+{mk.length - 6}</span>}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Expanded panel (full detail with market dropdowns) */}
       {expanded && (
         <div style={{ padding: '4px 20px 20px 68px', animation: 'fadeIn 0.15s ease' }}>
           <div style={{ background: 'var(--s1)', border: '1px solid var(--b2)', borderRadius: 12, overflow: 'hidden' }}>
             {/* Toolbar */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderBottom: '1px solid var(--b1)', flexWrap: 'wrap', gap: 10 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
-                <Pill label="Stores" value={stores.length} />
-                <Pill label="Products" value={totalProducts} accent="var(--brand)" />
-                <Pill label="Revenue" value={fmtCurrency(revenue)} mono />
-                <Pill label="Orders" value={orders} mono />
-                {batch.source && <Pill label="Source" value={batch.source} />}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--t1)' }}>{batch.name}</span>
+                <CopyButton value={batch.name} />
                 {batch.start_date && <Pill label="Live since" value={fmtDate(batch.start_date)} />}
               </div>
               <div style={{ display: 'flex', gap: 8 }}>
+                <Btn onClick={() => onAction('open')} variant="ghost" size="sm">Open full page ↗</Btn>
                 <Btn onClick={() => onSync(batch)} loading={syncing} variant="primary" size="sm">{syncing ? 'Syncing…' : 'Sync now'}</Btn>
                 <Btn onClick={() => onAction('edit')} variant="ghost" size="sm">Edit</Btn>
               </div>
             </div>
 
-            {/* Metadata */}
-            {(batch.thesis || batch.validation_notes || batch.changes?.length > 0) && (
-              <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--b1)', display: 'flex', flexDirection: 'column', gap: 10 }}>
-                {batch.thesis && <MetaLine label="Thesis" value={batch.thesis} />}
-                {batch.validation_notes && <MetaLine label="Validation" value={batch.validation_notes} />}
-                {batch.changes?.length > 0 && (
-                  <div>
-                    <div style={{ fontSize: 9.5, fontWeight: 700, color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 5 }}>Changes</div>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
-                      {batch.changes.map(c => <span key={c} style={{ fontSize: 11, fontWeight: 600, color: 'var(--brand)', background: 'var(--brand-l)', borderRadius: 5, padding: '2px 9px' }}>{c}</span>)}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Stores */}
-            <div style={{ padding: '6px 0' }}>
-              {stores.length === 0 ? (
-                <div style={{ padding: '20px 16px', textAlign: 'center', fontSize: 12, color: 'var(--t3)' }}>No stores linked yet. Use Edit to link stores.</div>
+            {/* Full rich detail — same as the detail page */}
+            <div style={{ padding: 16 }}>
+              {detailLoading && !detail ? (
+                <div style={{ padding: '24px 0', textAlign: 'center', fontSize: 12, color: 'var(--t3)', fontFamily: "'Fira Code', monospace" }}>Loading details…</div>
               ) : (
-                stores.map((bs, i) => {
-                  const r = (bs.biq_performance_daily || []).reduce((s, p) => s + parseFloat(p.revenue || 0), 0);
-                  const o = (bs.biq_performance_daily || []).reduce((s, p) => s + (p.orders || 0), 0);
-                  const tag = bs.shopify_tag || batch.batch_tag;
-                  return (
-                    <div key={bs.id} style={{ display: 'grid', gridTemplateColumns: '1fr 140px 90px 90px', alignItems: 'center', gap: 12, padding: '10px 16px', borderTop: i > 0 ? '1px solid var(--b1)' : 'none' }}>
-                      <div>
-                        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--t1)' }}>{bs.biq_stores?.name || '—'}</div>
-                        {bs.notes && <div style={{ fontSize: 11, color: 'var(--t3)', marginTop: 1 }}>{bs.notes}</div>}
-                      </div>
-                      <div>{tag ? <TagChip tag={tag} /> : <span style={{ fontSize: 11, color: 'var(--t3)' }}>no tag</span>}</div>
-                      <div style={{ textAlign: 'right', fontFamily: "'Fira Code', monospace", fontSize: 12, color: 'var(--t2)' }}>{bs.product_count || 0} prod</div>
-                      <div style={{ textAlign: 'right', fontFamily: "'Fira Code', monospace", fontSize: 13, fontWeight: 600, color: r > 0 ? 'var(--green)' : 'var(--t4)' }}>{fmtCurrency(r)}</div>
-                    </div>
-                  );
-                })
+                <BatchRichContent batch={detail} range={range} onRangeChange={setRange} />
               )}
             </div>
           </div>
@@ -662,11 +707,13 @@ export default function Dashboard() {
           </div>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14, marginBottom: 22 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 14, marginBottom: 22 }}>
           <StatCard label="Active batches" value={activeCount} accent="var(--c-violet)"
             icon={<svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect x="2.5" y="2.5" width="6" height="6" rx="1.5" stroke="currentColor" strokeWidth="1.6"/><rect x="11.5" y="2.5" width="6" height="6" rx="1.5" stroke="currentColor" strokeWidth="1.6"/><rect x="2.5" y="11.5" width="6" height="6" rx="1.5" stroke="currentColor" strokeWidth="1.6"/><rect x="11.5" y="11.5" width="6" height="6" rx="1.5" stroke="currentColor" strokeWidth="1.6"/></svg>} />
           <StatCard label="Revenue" value={fmtCurrency(totalRevenue)} accent="var(--c-emerald)" mono
             icon={<svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M10 2v16M6 5h6a2.5 2.5 0 0 1 0 5H7a2.5 2.5 0 0 0 0 5h7" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/></svg>} />
+          <StatCard label="Ad spend" value={fmtCurrency(totalSpend)} accent="var(--c-rose, #F43F5E)" mono
+            icon={<svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M3 10h14M3 10l3-3M3 10l3 3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/><rect x="2.5" y="3.5" width="15" height="13" rx="2" stroke="currentColor" strokeWidth="1.6"/></svg>} />
           <StatCard label="Orders" value={totalOrders} accent="var(--c-blue)" mono
             icon={<svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M3 5h2l1.5 9h8L16 7H5.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/><circle cx="7.5" cy="16.5" r="1" fill="currentColor"/><circle cx="13.5" cy="16.5" r="1" fill="currentColor"/></svg>} />
           <StatCard label="Blended ROAS" value={blendedRoas ? `${blendedRoas.toFixed(2)}×` : '—'} accent="var(--c-amber)" mono
@@ -728,11 +775,11 @@ export default function Dashboard() {
 
       <div style={{ margin: '0 32px 32px', background: 'var(--s1)', border: '1px solid var(--b1)', borderRadius: 14, overflow: 'visible', boxShadow: 'var(--sh-md)' }}>
         {!loading && filtered.length > 0 && (
-          <div style={{ display: 'grid', gridTemplateColumns: '38px 30px 38px 100px 1fr 110px 110px 56px 80px 90px 100px', alignItems: 'center', gap: 12, padding: '11px 20px', borderBottom: '1px solid var(--b1)', background: 'var(--s2)', borderRadius: '14px 14px 0 0' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '38px 30px 38px 100px 1fr 110px 100px 90px 56px 80px 90px 100px', alignItems: 'center', gap: 12, padding: '11px 20px', borderBottom: '1px solid var(--b1)', background: 'var(--s2)', borderRadius: '14px 14px 0 0' }}>
             <Checkbox checked={allSelected} indeterminate={someSelected} onChange={toggleAll} />
             <div />
-            {['#', 'Tag', 'Batch', 'Revenue', 'Orders', 'ROAS', 'Relative', 'Status'].map((h) => (
-              <div key={h} style={{ fontSize: 9.5, fontWeight: 700, color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '0.07em', textAlign: ['Revenue', 'Orders', 'ROAS'].includes(h) ? 'right' : 'left' }}>{h}</div>
+            {['#', 'Tag', 'Batch', 'Revenue', 'Spend', 'Orders', 'ROAS', 'Relative', 'Status'].map((h) => (
+              <div key={h} style={{ fontSize: 9.5, fontWeight: 700, color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '0.07em', textAlign: ['Revenue', 'Spend', 'Orders', 'ROAS'].includes(h) ? 'right' : 'left' }}>{h}</div>
             ))}
             <div />
           </div>
