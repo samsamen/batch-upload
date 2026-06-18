@@ -43,7 +43,7 @@ router.get('/', async (req, res) => {
   const { data: batches, error } = await supabase
     .from('biq_batches')
     .select(`
-      id, batch_code, batch_tag, name, source, thesis, tags, sub_tags, changes, status, created_at,
+      id, batch_code, batch_tag, name, source, thesis, validation_notes, tags, sub_tags, changes, changes_note, status, created_at,
       biq_batch_stores (
         id, shopify_tag, product_count, notes,
         biq_stores ( id, name, shop_domain, country, currency ),

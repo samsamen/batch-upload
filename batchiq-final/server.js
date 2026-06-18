@@ -10,6 +10,7 @@ const storesRoutes  = require('./src/routes/stores');
 const batchesRoutes = require('./src/routes/batches');
 const syncRoutes    = require('./src/routes/sync');
 const configRoutes  = require('./src/routes/config');
+const researchRoutes = require('./src/routes/research');
 const { syncAll }   = require('./src/routes/sync');
 
 const app  = express();
@@ -28,6 +29,7 @@ app.use('/api/stores',   storesRoutes);
 app.use('/api/batches',  batchesRoutes);
 app.use('/api/sync',     syncRoutes);
 app.use('/api/config',   configRoutes);
+app.use('/api/research', researchRoutes);
 
 // Serve frontend — built into backend/public during Railway build
 const frontendDist = path.join(__dirname, 'public');

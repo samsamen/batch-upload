@@ -23,3 +23,18 @@ ALTER TABLE biq_batches ALTER COLUMN batch_tag DROP NOT NULL;
 ALTER TABLE biq_batches ADD COLUMN IF NOT EXISTS sub_tags JSONB DEFAULT '[]';
 ALTER TABLE biq_batches ADD COLUMN IF NOT EXISTS changes JSONB DEFAULT '[]';
 ALTER TABLE biq_batches ADD COLUMN IF NOT EXISTS changes_note TEXT;
+
+-- Research ideas — kanban brainstorm board
+CREATE TABLE IF NOT EXISTS biq_research (
+  id            UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  title         TEXT NOT NULL,
+  note          TEXT,
+  status        TEXT DEFAULT 'backlog',
+  source        TEXT,
+  results       TEXT,
+  tags          TEXT[] DEFAULT '{}',
+  batch_id      UUID REFERENCES biq_batches(id) ON DELETE SET NULL,
+  position      INTEGER DEFAULT 0,
+  created_at    TIMESTAMPTZ DEFAULT NOW(),
+  updated_at    TIMESTAMPTZ DEFAULT NOW()
+);

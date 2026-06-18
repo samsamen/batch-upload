@@ -4,6 +4,7 @@ import Layout from './components/Layout.jsx';
 import Dashboard from './pages/Dashboard.jsx';
 import BatchDetail from './pages/BatchDetail.jsx';
 import Stores from './pages/Stores.jsx';
+import Research from './pages/Research.jsx';
 
 export default function App() {
   return (
@@ -12,6 +13,7 @@ export default function App() {
         <Layout>
           <Routes>
             <Route path="/"            element={<Dashboard />} />
+            <Route path="/research"    element={<Research />} />
             <Route path="/batches/:id" element={<BatchDetail />} />
             <Route path="/stores"      element={<Stores />} />
             <Route path="*"            element={<Navigate to="/" replace />} />

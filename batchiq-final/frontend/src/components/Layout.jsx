@@ -41,6 +41,7 @@ export default function Layout({ children }) {
         <nav style={{ flex: 1, padding: '14px 12px', display: 'flex', flexDirection: 'column', gap: 2 }}>
           <SectionLabel>Workspace</SectionLabel>
           <NavItem to="/" icon={<IconGrid />}>Batches</NavItem>
+          <NavItem to="/research" icon={<IconBulb />}>Research</NavItem>
           <SectionLabel>Configure</SectionLabel>
           <NavItem to="/stores" icon={<IconStore />}>Stores</NavItem>
         </nav>
@@ -118,6 +119,9 @@ const IconGrid = () => (
 );
 const IconStore = () => (
   <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 6.5V13a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V6.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/><path d="M1.5 4.2 2.6 2.3a1 1 0 0 1 .87-.5h9.06a1 1 0 0 1 .87.5l1.1 1.9a2 2 0 0 1-3.5 1.9 2 2 0 0 1-3.46 0 2 2 0 0 1-3.46 0 2 2 0 0 1-3.5-1.9Z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/></svg>
+);
+const IconBulb = () => (
+  <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M6 13h4M6.5 11h3M5 7.5a3 3 0 1 1 6 0c0 1.2-.7 2-1.3 2.6-.4.4-.7.7-.7 1.4h-2c0-.7-.3-1-.7-1.4C5.7 9.5 5 8.7 5 7.5Z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/></svg>
 );
 const IconSun = () => (
   <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="3" stroke="currentColor" strokeWidth="1.5"/><path d="M8 1v1.5M8 13.5V15M15 8h-1.5M2.5 8H1M12.9 3.1l-1 1M4.1 11.9l-1 1M12.9 12.9l-1-1M4.1 4.1l-1-1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>

@@ -88,3 +88,18 @@ CREATE TABLE IF NOT EXISTS biq_config (
 
 -- Seed the single config row
 INSERT INTO biq_config (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
+
+-- Research ideas — kanban brainstorm board
+CREATE TABLE IF NOT EXISTS biq_research (
+  id            UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  title         TEXT NOT NULL,
+  note          TEXT,                       -- the idea itself
+  status        TEXT DEFAULT 'backlog',     -- backlog / in_progress / done
+  source        TEXT,                       -- where you saw it
+  results       TEXT,                       -- "tested, this came out"
+  tags          TEXT[] DEFAULT '{}',
+  batch_id      UUID REFERENCES biq_batches(id) ON DELETE SET NULL,  -- optional link
+  position      INTEGER DEFAULT 0,          -- order within a column
+  created_at    TIMESTAMPTZ DEFAULT NOW(),
+  updated_at    TIMESTAMPTZ DEFAULT NOW()
+);
