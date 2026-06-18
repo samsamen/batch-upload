@@ -16,6 +16,7 @@ const googleAdsRoutes = require('./src/routes/googleAds');
 const { syncAll }   = require('./src/routes/sync');
 
 const app  = express();
+app.set('trust proxy', true);
 const PORT = process.env.PORT || 8080;
 
 app.use(cors({ origin: (origin, cb) => cb(null, true), credentials: true }));

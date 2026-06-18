@@ -10,6 +10,16 @@ const OAUTH_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const OAUTH_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const GADS_SCOPE = 'https://www.googleapis.com/auth/adwords';
 
+// Build the callback URL. Behind Railway's proxy req.protocol is "http", so we
+// honor x-forwarded-proto and default to https for any non-localhost host.
+function buildRedirectUri(req) {
+  const host = req.get('host') || '';
+  const fwdProto = (req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
+  const isLocal = host.startsWith('localhost') || host.startsWith('127.0.0.1');
+  const proto = fwdProto || (isLocal ? 'http' : 'https');
+  return `${proto}://${host}/api/google-ads/callback`;
+}
+
 // GET /api/google-ads/config — credential status (no secrets leaked)
 router.get('/config', async (req, res) => {
   const cfg = await getConfig();
@@ -43,7 +53,7 @@ router.get('/auth-url', async (req, res) => {
   if (!store_id) return res.status(400).json({ error: 'store_id is required.' });
   const cfg = await getConfig();
   if (!cfg.gads_client_id) return res.status(400).json({ error: 'Enter the Google Ads OAuth Client ID first (one-time, top of Stores page).' });
-  const redirectUri = `${req.protocol}://${req.get('host')}/api/google-ads/callback`;
+  const redirectUri = buildRedirectUri(req);
   const params = new URLSearchParams({
     client_id: cfg.gads_client_id,
     redirect_uri: redirectUri,
@@ -63,7 +73,7 @@ router.get('/callback', async (req, res) => {
   if (!code || !state) return res.redirect('/stores?gads_error=missing_code_or_store');
 
   const cfg = await getConfig();
-  const redirectUri = `${req.protocol}://${req.get('host')}/api/google-ads/callback`;
+  const redirectUri = buildRedirectUri(req);
   try {
     const r = await fetch(OAUTH_TOKEN_URL, {
       method: 'POST',
