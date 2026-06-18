@@ -23,8 +23,14 @@ app.use(cors({ origin: (origin, cb) => cb(null, true), credentials: true }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+const BUILD_VERSION = 'v3.0-currency-inline-picker-ctr';
+const BUILD_TIME = new Date().toISOString();
+
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', version: '1.0.0', time: new Date().toISOString() });
+  res.json({ status: 'ok', version: BUILD_VERSION, build_time: BUILD_TIME, time: new Date().toISOString() });
+});
+app.get('/api/version', (req, res) => {
+  res.json({ version: BUILD_VERSION, build_time: BUILD_TIME });
 });
 
 app.use('/api/shopify',  shopifyRoutes);

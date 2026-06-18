@@ -88,11 +88,15 @@ router.get('/callback', async (req, res) => {
     });
     const json = await r.json();
     if (!json.refresh_token) {
-      return res.redirect(`/stores?gads_error=${encodeURIComponent('No refresh token. Remove BatchIQ under your Google account permissions, then connect again.')}`);
+      return res.redirect(`/stores?gads_error=${encodeURIComponent('No refresh token returned. Remove BatchIQ at myaccount.google.com/permissions, then connect again.')}`);
     }
-    await supabase.from('biq_stores')
+    const { error: saveErr } = await supabase.from('biq_stores')
       .update({ gads_refresh_token: json.refresh_token })
       .eq('id', state);
+    if (saveErr) {
+      // Most common cause: the gads_refresh_token column doesn't exist yet (migration not run)
+      return res.redirect(`/stores?gads_error=${encodeURIComponent('Could not save the Google connection: ' + saveErr.message + '. Run the latest migration.sql in Supabase (it adds the gads_refresh_token column), then reconnect.')}`);
+    }
     res.redirect(`/stores?gads_connected=${encodeURIComponent(state)}`);
   } catch (err) {
     res.redirect(`/stores?gads_error=${encodeURIComponent(err.message)}`);

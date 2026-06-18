@@ -5,6 +5,21 @@ import { api, fmtCurrency, fmtDate } from '../api.js';
 
 // ── Shared primitives (duplicated here to keep pages self-contained) ─────────
 
+function BatchStageBadge({ stage }) {
+  const map = {
+    draft:       { label: 'Draft',       color: 'var(--t3)',    bg: 'var(--s3)' },
+    in_progress: { label: 'In Progress', color: 'var(--amber)', bg: 'var(--amber-bg)' },
+    live:        { label: 'Live',        color: 'var(--green)', bg: 'var(--green-bg)' },
+  };
+  const s = map[stage] || map.draft;
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 700, color: s.color, background: s.bg, border: '1px solid ' + s.color + '44', borderRadius: 6, padding: '3px 10px' }}>
+      <span style={{ width: 7, height: 7, borderRadius: '50%', background: s.color, boxShadow: stage === 'live' ? `0 0 6px ${s.color}` : 'none' }} />
+      {s.label}
+    </span>
+  );
+}
+
 function TagChip({ tag }) {
   return (
     <span style={{
@@ -433,10 +448,17 @@ export default function BatchDetail() {
             <span style={{ fontSize: 10, color: 'var(--t3)' }}>
               Created {fmtDate(batch.created_at)}
             </span>
+            {batch.start_date && (
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 10.5, fontWeight: 700, color: 'var(--brand)', background: 'var(--brand-l)', border: '1px solid var(--brand-l)', borderRadius: 5, padding: '2px 9px' }}>
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none"><rect x="3" y="4" width="18" height="17" rx="2" stroke="currentColor" strokeWidth="2"/><path d="M3 9h18M8 2v4M16 2v4" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
+                Live since {fmtDate(batch.start_date)}
+              </span>
+            )}
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 18, fontWeight: 700, color: 'var(--t1)' }}>
             {batch.name}
             <CopyButton value={batch.name} />
+            <BatchStageBadge stage={batch.stage} />
           </div>
         </div>
 

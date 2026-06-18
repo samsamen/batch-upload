@@ -117,3 +117,10 @@ ALTER TABLE biq_stores ADD COLUMN IF NOT EXISTS shopify_ok BOOLEAN DEFAULT NULL;
 ALTER TABLE biq_stores ADD COLUMN IF NOT EXISTS shopify_checked_at TIMESTAMPTZ;
 ALTER TABLE biq_stores ADD COLUMN IF NOT EXISTS gads_ok BOOLEAN DEFAULT NULL;
 ALTER TABLE biq_stores ADD COLUMN IF NOT EXISTS gads_checked_at TIMESTAMPTZ;
+
+-- User-set start/upload date for a batch (when the products went live)
+ALTER TABLE biq_batches ADD COLUMN IF NOT EXISTS start_date DATE;
+
+-- Lifecycle stage set by the user (Draft / In Progress / Live), separate from
+-- the active/paused/archived status used for filtering & archiving.
+ALTER TABLE biq_batches ADD COLUMN IF NOT EXISTS stage TEXT DEFAULT 'draft';

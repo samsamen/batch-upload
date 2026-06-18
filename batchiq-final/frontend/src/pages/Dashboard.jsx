@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { api, fmtCurrency } from '../api.js';
+import { api, fmtCurrency, fmtDate } from '../api.js';
 
 const SOURCES = ['AliExpress spy', 'Competitor store', 'TikTok trend', 'Google Trends', 'Manual research', 'Supplier suggestion', 'Other'];
 const CHANGE_OPTIONS = ['Pricing changed', 'Only branding changed', 'Used own template', 'Added creatives', 'Changed all creatives', 'Nothing changed'];
@@ -52,6 +52,21 @@ function Btn({ children, onClick, disabled, variant = 'ghost', size = 'md', load
 
 function TagChip({ tag }) {
   return <span style={{ display: 'inline-block', fontFamily: "'Fira Code', monospace", fontSize: 11, fontWeight: 600, color: 'var(--brand)', background: 'var(--brand-l)', border: '1px solid transparent', borderRadius: 5, padding: '2px 8px', whiteSpace: 'nowrap' }}>{tag}</span>;
+}
+
+function StageBadge({ stage }) {
+  const map = {
+    draft:       { label: 'Draft',       color: 'var(--t3)',    bg: 'var(--s3)' },
+    in_progress: { label: 'In Progress', color: 'var(--amber)', bg: 'var(--amber-bg)' },
+    live:        { label: 'Live',        color: 'var(--green)', bg: 'var(--green-bg)' },
+  };
+  const s = map[stage] || map.draft;
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 10.5, fontWeight: 700, color: s.color, background: s.bg, border: '1px solid ' + s.color + '44', borderRadius: 5, padding: '2px 8px' }}>
+      <span style={{ width: 6, height: 6, borderRadius: '50%', background: s.color, boxShadow: stage === 'live' ? `0 0 6px ${s.color}` : 'none' }} />
+      {s.label}
+    </span>
+  );
 }
 
 function StatusDot({ status }) {
@@ -154,6 +169,8 @@ function BatchModal({ mode, batch, onClose, onSaved }) {
     source_other: _isOther ? _srcRaw.replace(/^Other:\s*/, '') : '',
     thesis: batch?.thesis || '', validation_notes: batch?.validation_notes || '',
     tags: (batch?.tags || []).join(', '), changes_note: batch?.changes_note || '',
+    start_date: batch?.start_date || '',
+    stage: batch?.stage || 'draft',
   });
   const [subTags, setSubTags] = useState(batch?.sub_tags || []);
   const [nameIsTag, setNameIsTag] = useState(isEdit ? !batch?.batch_tag : true);
@@ -317,6 +334,37 @@ function BatchModal({ mode, batch, onClose, onSaved }) {
               />
             )}
           </div>
+          <div>
+            <Label>Start date <span style={{ fontWeight: 400, color: 'var(--t3)' }}>(when these products went live)</span></Label>
+            <input type="date" value={form.start_date || ''} onChange={set('start_date')} style={{ fontFamily: "'Fira Code', monospace" }} />
+          </div>
+          <div>
+            <Label>Stage</Label>
+            <div style={{ display: 'flex', gap: 6 }}>
+              {[
+                { v: 'draft', label: 'Draft', color: 'var(--t3)' },
+                { v: 'in_progress', label: 'In Progress', color: 'var(--amber)' },
+                { v: 'live', label: 'Live', color: 'var(--green)' },
+              ].map(opt => {
+                const on = form.stage === opt.v;
+                return (
+                  <button key={opt.v} type="button" onClick={() => setForm(f => ({ ...f, stage: opt.v }))}
+                    style={{
+                      flex: 1, padding: '8px 10px', borderRadius: 8, cursor: 'pointer',
+                      fontSize: 12, fontWeight: 700,
+                      border: '1px solid ' + (on ? opt.color : 'var(--b2)'),
+                      background: on ? opt.color : 'var(--s1)',
+                      color: on ? '#fff' : 'var(--t2)',
+                      display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                      transition: 'all 0.12s',
+                    }}>
+                    <span style={{ width: 7, height: 7, borderRadius: '50%', background: on ? '#fff' : opt.color }} />
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
           <div><Label>Thesis</Label><textarea rows={2} placeholder="Why you think this will perform." value={form.thesis} onChange={set('thesis')} style={{ resize: 'vertical' }} /></div>
           <div><Label>Validation</Label><textarea rows={2} placeholder="Social proof, competitor signals, trends." value={form.validation_notes} onChange={set('validation_notes')} style={{ resize: 'vertical' }} /></div>
           <div><Label>Labels (comma-separated)</Label><input placeholder="summer, impulse-buy, fashion" value={form.tags} onChange={set('tags')} /></div>
@@ -399,7 +447,10 @@ function BatchRow({ batch, rank, maxRevenue, selected, onSelect, onAction, expan
         <RankBadge rank={rank} />
         <div>{batch.batch_tag ? <TagChip tag={batch.batch_tag} /> : <span style={{ fontFamily: "'Fira Code', monospace", fontSize: 10.5, color: 'var(--t4)' }}>{batch.batch_code}</span>}</div>
         <div style={{ minWidth: 0, cursor: 'pointer' }} onClick={onToggle}>
-          <div style={{ fontWeight: 700, color: 'var(--t1)', fontSize: 13.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{batch.name}</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+            <div style={{ fontWeight: 700, color: 'var(--t1)', fontSize: 13.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{batch.name}</div>
+            <StageBadge stage={batch.stage} />
+          </div>
           {batch.thesis && <div style={{ fontSize: 11.5, color: 'var(--t2)', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{batch.thesis}</div>}
         </div>
         <div style={{ textAlign: 'right', fontFamily: "'Fira Code', monospace", fontSize: 14, fontWeight: 600, color: revenue > 0 ? 'var(--t1)' : 'var(--t4)' }}>{fmtCurrency(revenue)}</div>
@@ -426,6 +477,7 @@ function BatchRow({ batch, rank, maxRevenue, selected, onSelect, onAction, expan
                 <Pill label="Revenue" value={fmtCurrency(revenue)} mono />
                 <Pill label="Orders" value={orders} mono />
                 {batch.source && <Pill label="Source" value={batch.source} />}
+                {batch.start_date && <Pill label="Live since" value={fmtDate(batch.start_date)} />}
               </div>
               <div style={{ display: 'flex', gap: 8 }}>
                 <Btn onClick={() => onSync(batch)} loading={syncing} variant="primary" size="sm">{syncing ? 'Syncing…' : 'Sync now'}</Btn>

@@ -548,7 +548,7 @@ export default function Stores() {
     const c = searchParams.get('connected');
     if (c) { setSuccess(`${decodeURIComponent(c)} connected.`); window.history.replaceState({}, '', '/stores'); }
     const gc = searchParams.get('gads_connected');
-    if (gc) { setSuccess('Google Ads connected for the store. Now pick the account ID in Edit.'); window.history.replaceState({}, '', '/stores'); }
+    if (gc) { setSuccess('Google Ads connected. Pick the account in the dropdown that just appeared in the store row.'); window.history.replaceState({}, '', '/stores'); }
     const ge = searchParams.get('gads_error');
     if (ge) { setError(`Google Ads: ${decodeURIComponent(ge)}`); window.history.replaceState({}, '', '/stores'); }
     load(); loadConfig(); loadGadsCfg();

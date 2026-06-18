@@ -44,7 +44,7 @@ router.get('/', async (req, res) => {
   const { data: batches, error } = await supabase
     .from('biq_batches')
     .select(`
-      id, batch_code, batch_tag, name, source, thesis, validation_notes, tags, sub_tags, changes, changes_note, status, created_at,
+      id, batch_code, batch_tag, name, source, thesis, validation_notes, tags, sub_tags, changes, changes_note, status, stage, created_at, start_date,
       biq_batch_stores (
         id, shopify_tag, product_count, product_count_active, product_count_draft, product_count_archived, notes,
         biq_stores ( id, name, shop_domain, country, currency, markets ),
@@ -97,7 +97,7 @@ router.get('/:id', async (req, res) => {
   const { data, error } = await supabase
     .from('biq_batches')
     .select(`
-      id, batch_code, batch_tag, name, source, thesis, validation_notes, tags, sub_tags, changes, changes_note, status, created_at,
+      id, batch_code, batch_tag, name, source, thesis, validation_notes, tags, sub_tags, changes, changes_note, status, stage, created_at, start_date,
       biq_batch_stores (
         id, shopify_tag, product_count, product_count_active, product_count_draft, product_count_archived, notes, added_at,
         biq_stores ( id, name, shop_domain, country, currency, markets, gads_customer_id ),
@@ -163,7 +163,7 @@ router.get('/:id', async (req, res) => {
 
 // ── POST /api/batches — create a new batch ─────────────────────────────────
 router.post('/', async (req, res) => {
-  const { name, source, thesis, validation_notes, tags, batch_tag, sub_tags, changes, changes_note, store_links } = req.body;
+  const { name, source, thesis, validation_notes, tags, batch_tag, sub_tags, changes, changes_note, store_links, start_date, stage } = req.body;
 
   if (!name) return res.status(400).json({ error: 'name is required' });
 
@@ -179,6 +179,8 @@ router.post('/', async (req, res) => {
       sub_tags: sub_tags || [],
       changes: changes || [],
       changes_note: changes_note || null,
+      start_date: start_date || null,
+      stage: stage || 'draft',
     })
     .select()
     .single();
@@ -232,10 +234,10 @@ router.get('/suggest-name', async (req, res) => {
 
 // ── PATCH /api/batches/:id — update batch metadata ─────────────────────────
 router.patch('/:id', async (req, res) => {
-  const { name, source, thesis, validation_notes, tags, status, batch_tag, sub_tags, changes, changes_note } = req.body;
+  const { name, source, thesis, validation_notes, tags, status, batch_tag, sub_tags, changes, changes_note, start_date, stage } = req.body;
 
   const update = {};
-  for (const [k, v] of Object.entries({ name, source, thesis, validation_notes, tags, status, batch_tag, sub_tags, changes, changes_note })) {
+  for (const [k, v] of Object.entries({ name, source, thesis, validation_notes, tags, status, batch_tag, sub_tags, changes, changes_note, start_date, stage })) {
     if (v !== undefined) update[k] = v;
   }
 
