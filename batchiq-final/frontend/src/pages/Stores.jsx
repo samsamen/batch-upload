@@ -15,6 +15,57 @@ function Label({ children }) {
   );
 }
 
+function InlineGadsAccountPicker({ store, onPicked, onError }) {
+  const [accounts, setAccounts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [val, setVal] = useState('');
+  const [localErr, setLocalErr] = useState(null);
+
+  useEffect(() => { load(); }, []);
+
+  async function load() {
+    setLoading(true); setLocalErr(null);
+    try {
+      const r = await api.get(`/api/google-ads/accounts?store_id=${store.id}`);
+      setAccounts(r.accounts || []);
+    } catch (e) { setLocalErr(e.message); } finally { setLoading(false); }
+  }
+
+  async function pick(cid) {
+    if (!cid) return;
+    setSaving(true); setLocalErr(null);
+    try {
+      await api.patch(`/api/google-ads/store/${store.id}`, { gads_customer_id: cid });
+      onPicked(cid);
+    } catch (e) { setLocalErr(e.message); onError && onError(e.message); } finally { setSaving(false); }
+  }
+
+  return (
+    <div style={{ marginTop: 4, padding: '7px 9px', background: 'var(--brand-l)', borderRadius: 8, border: '1px solid var(--brand-l)', minWidth: 220 }}>
+      <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--brand)', marginBottom: 5, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Choose Google Ads account</div>
+      {loading ? (
+        <div style={{ fontSize: 11, color: 'var(--t2)' }}>Loading accounts…</div>
+      ) : localErr ? (
+        <div style={{ fontSize: 10.5, color: 'var(--red)', lineHeight: 1.4 }}>
+          {localErr}
+          <button onClick={load} style={{ display: 'block', marginTop: 4, fontSize: 10, color: 'var(--brand)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, fontWeight: 700 }}>Retry</button>
+        </div>
+      ) : accounts.length === 0 ? (
+        <div style={{ fontSize: 10.5, color: 'var(--t3)' }}>No accounts found for this login.</div>
+      ) : (
+        <select value={val} disabled={saving} onChange={(e) => { setVal(e.target.value); pick(e.target.value); }}
+          style={{ width: '100%', fontFamily: "'Fira Code', monospace", fontSize: 11.5, padding: '5px 7px', borderRadius: 6 }}>
+          <option value="">{saving ? 'Saving…' : '— select —'}</option>
+          {accounts.map(a => (
+            <option key={a.id} value={a.id} disabled={a.manager}>{a.name} · {a.id}{a.manager ? ' (manager)' : ''}{a.currency ? ` · ${a.currency}` : ''}</option>
+          ))}
+        </select>
+      )}
+    </div>
+  );
+}
+
 function GadsGlyph({ light }) {
   return (
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0 }}>
@@ -692,6 +743,12 @@ export default function Stores() {
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
                         <StatusDot on={s.shopify_verified} label="Shopify" onText="Verified" offText="Not verified" />
                         <StatusDot on={s.gads_linked} label="Google Ads" onText="Active" offText={s.gads_connected ? 'Pick account' : 'Not connected'} />
+                        {s.gads_connected && !s.gads_linked && (
+                          <InlineGadsAccountPicker store={s} onPicked={(cid) => {
+                            setStores(p => p.map(x => x.id === s.id ? { ...x, gads_customer_id: cid, gads_linked: true } : x));
+                            setSuccess(`${s.name}: Google Ads account linked.`);
+                          }} onError={setError} />
+                        )}
                       </div>
                     </td>
                     <td style={{ padding: '11px 20px' }}>

@@ -63,7 +63,7 @@ function MarketDropdown({ markets, batchOverlap }) {
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
             <thead>
               <tr style={{ borderBottom: '1px solid var(--b1)' }}>
-                {['Market', 'Revenue', 'Ad spend', 'ROAS', 'Orders', 'Units'].map(h => (
+                {['Market', 'Revenue', 'Ad spend', 'ROAS', 'CTR', 'Orders', 'Units'].map(h => (
                   <th key={h} style={{ textAlign: h === 'Market' ? 'left' : 'right', padding: '6px 10px', fontSize: 9, fontWeight: 600, color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{h}</th>
                 ))}
               </tr>
@@ -81,6 +81,7 @@ function MarketDropdown({ markets, batchOverlap }) {
                     <td style={{ padding: '7px 10px', textAlign: 'right', fontFamily: "'Fira Code', monospace", color: m.revenue > 0 ? 'var(--brand)' : 'var(--t3)' }}>{fmtCurrency(m.revenue)}</td>
                     <td style={{ padding: '7px 10px', textAlign: 'right', fontFamily: "'Fira Code', monospace", color: 'var(--t2)' }}>{fmtCurrency(m.spend)}</td>
                     <td style={{ padding: '7px 10px', textAlign: 'right', fontFamily: "'Fira Code', monospace", fontWeight: 700, color: m.roas >= 1 ? 'var(--green)' : (m.roas !== null ? 'var(--amber)' : 'var(--t3)') }}>{m.roas !== null ? m.roas.toFixed(2) : '—'}</td>
+                    <td style={{ padding: '7px 10px', textAlign: 'right', fontFamily: "'Fira Code', monospace", color: 'var(--t2)' }}>{m.ctr !== null && m.ctr !== undefined ? m.ctr.toFixed(2) + '%' : '—'}</td>
                     <td style={{ padding: '7px 10px', textAlign: 'right', fontFamily: "'Fira Code', monospace", color: 'var(--t2)' }}>{m.orders}</td>
                     <td style={{ padding: '7px 10px', textAlign: 'right', fontFamily: "'Fira Code', monospace", color: 'var(--t2)' }}>{m.units}</td>
                   </tr>
@@ -367,8 +368,11 @@ export default function BatchDetail() {
     const unt = r.units ?? (bs.biq_performance_daily || []).reduce((s, p) => s + (p.units_sold || 0), 0);
     const spend = r.spend ?? 0;
     const roas = r.roas ?? (spend > 0 ? rev / spend : null);
+    const clicks = r.clicks ?? 0;
+    const impressions = r.impressions ?? 0;
+    const ctr = r.ctr ?? (impressions > 0 ? (clicks / impressions) * 100 : null);
     const markets = r.markets || [];
-    return { ...bs, totals: { revenue: rev, orders: ord, units: unt, spend, roas }, marketRows: markets };
+    return { ...bs, totals: { revenue: rev, orders: ord, units: unt, spend, roas, clicks, impressions, ctr }, marketRows: markets };
   }).sort((a, b) => b.totals.revenue - a.totals.revenue);
 
   const grand = storeRows.reduce(
@@ -377,14 +381,17 @@ export default function BatchDetail() {
       orders: acc.orders + r.totals.orders,
       units: acc.units + r.totals.units,
       spend: acc.spend + (r.totals.spend || 0),
+      clicks: acc.clicks + (r.totals.clicks || 0),
+      impressions: acc.impressions + (r.totals.impressions || 0),
       active: acc.active + (r.product_count_active || 0),
       draft: acc.draft + (r.product_count_draft || 0),
       archived: acc.archived + (r.product_count_archived || 0),
       totalProducts: acc.totalProducts + (r.product_count || 0),
     }),
-    { revenue: 0, orders: 0, units: 0, spend: 0, active: 0, draft: 0, archived: 0, totalProducts: 0 }
+    { revenue: 0, orders: 0, units: 0, spend: 0, clicks: 0, impressions: 0, active: 0, draft: 0, archived: 0, totalProducts: 0 }
   );
   grand.roas = grand.spend > 0 ? grand.revenue / grand.spend : null;
+  grand.ctr = grand.impressions > 0 ? (grand.clicks / grand.impressions) * 100 : null;
 
   // Detect markets shared by 2+ stores within THIS batch (cannibalization risk)
   const batchMarketCount = {};
@@ -494,6 +501,7 @@ export default function BatchDetail() {
               <div style={{ height: 1, background: 'var(--b1)' }} />
               <BigStat label="Ad spend" value={fmtCurrency(grand.spend)} />
               <BigStat label="ROAS" value={grand.roas !== null ? grand.roas.toFixed(2) : '—'} gold={grand.roas !== null && grand.roas >= 1} />
+              <BigStat label="CTR" value={grand.ctr !== null ? grand.ctr.toFixed(2) + '%' : '—'} />
               <div style={{ height: 1, background: 'var(--b1)' }} />
               <BigStat label="Orders"  value={grand.orders} />
               <BigStat label="Units"   value={grand.units} />
@@ -620,6 +628,7 @@ export default function BatchDetail() {
                         <Stat label="Revenue" value={fmtCurrency(bs.totals.revenue)} accent={bs.totals.revenue > 0} />
                         <Stat label="Ad spend" value={fmtCurrency(bs.totals.spend || 0)} />
                         <Stat label="ROAS" value={bs.totals.roas !== null && bs.totals.roas !== undefined ? bs.totals.roas.toFixed(2) : '—'} accent={bs.totals.roas >= 1} />
+                        <Stat label="CTR" value={bs.totals.ctr !== null && bs.totals.ctr !== undefined ? bs.totals.ctr.toFixed(2) + '%' : '—'} />
                         <Stat label="Orders" value={bs.totals.orders} />
                         <Stat label="Units" value={bs.totals.units} />
                       </div>
