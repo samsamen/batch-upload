@@ -93,8 +93,36 @@ function TagChip({ tag }) {
   return <span style={{ fontFamily: "'Fira Code', monospace", fontSize: 11, fontWeight: 500, color: 'var(--brand)', border: '1px solid var(--b2)', borderRadius: 3, padding: '1px 8px', background: 'var(--brand-l)' }}>{tag}</span>;
 }
 
+function DiagFlag({ ok, label }) {
+  const color = ok === true ? 'var(--green)' : ok === false ? 'var(--red)' : 'var(--t3)';
+  const sym = ok === true ? '✓' : ok === false ? '✗' : '○';
+  return <span style={{ color }}>{sym} {label}</span>;
+}
+
+function DiagBox({ title, lines }) {
+  return (
+    <div style={{ background: 'var(--s2)', borderRadius: 8, padding: '8px 10px' }}>
+      <div style={{ fontSize: 9, fontWeight: 700, color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>{title}</div>
+      {lines.map((l, i) => <div key={i} style={{ fontFamily: "'Fira Code', monospace", fontSize: 10.5, color: String(l).includes('⚠') ? 'var(--amber)' : 'var(--t1)' }}>{l}</div>)}
+    </div>
+  );
+}
+
 export default function BatchRichContent({ batch, range, onRangeChange, onSyncStore, syncingStoreId }) {
+  const [diag, setDiag] = useState(null);
+  const [diagOpen, setDiagOpen] = useState(false);
+  const [diagLoading, setDiagLoading] = useState(false);
+
   if (!batch) return null;
+
+  async function loadDiag() {
+    setDiagOpen(o => !o);
+    if (diag) return;
+    setDiagLoading(true);
+    try { setDiag(await api.get(`/api/batches/${batch.id}/diagnostics`)); }
+    catch (e) { setDiag({ error: e.message }); }
+    finally { setDiagLoading(false); }
+  }
 
   const storeRows = (batch.biq_batch_stores || []).map(bs => {
     const r = bs.rollup || {};
@@ -132,6 +160,66 @@ export default function BatchRichContent({ batch, range, onRangeChange, onSyncSt
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {/* Diagnostics toggle */}
+      <div>
+        <button onClick={loadDiag}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 700, color: diagOpen ? '#fff' : 'var(--t2)', background: diagOpen ? 'var(--brand)' : 'var(--s2)', border: '1px solid var(--b2)', borderRadius: 8, padding: '6px 12px', cursor: 'pointer' }}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2"/><path d="M12 8v4M12 16h.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
+          Diagnostics {diag && diag.total_issues != null ? `(${diag.total_issues} issues)` : ''}
+        </button>
+      </div>
+
+      {diagOpen && (
+        <div style={{ background: 'var(--s1)', border: '1px solid var(--b2)', borderRadius: 12, padding: 16 }}>
+          {diagLoading ? (
+            <div style={{ fontSize: 12, color: 'var(--t3)', fontFamily: "'Fira Code', monospace" }}>Running diagnostics…</div>
+          ) : diag?.error ? (
+            <div style={{ fontSize: 12, color: 'var(--red)' }}>{diag.error}</div>
+          ) : diag ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: diag.total_issues > 0 ? 'var(--amber)' : 'var(--green)' }}>
+                {diag.total_issues > 0 ? `${diag.total_issues} issue(s) found across ${diag.store_count} store(s)` : `All ${diag.store_count} store(s) healthy`}
+              </div>
+              {diag.stores.map((s, i) => (
+                <div key={i} style={{ border: '1px solid var(--b1)', borderRadius: 10, padding: 12, fontSize: 11.5 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--t1)', marginBottom: 8 }}>{s.store} <span style={{ fontFamily: "'Fira Code', monospace", fontSize: 10, color: 'var(--t3)' }}>{s.shop_domain}</span></div>
+
+                  {/* Integration status */}
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginBottom: 8, fontFamily: "'Fira Code', monospace", fontSize: 10.5 }}>
+                    <DiagFlag ok={s.integration.shopify_ok} label="Shopify" />
+                    <DiagFlag ok={s.integration.gads_connected} label="GAds connected" />
+                    <DiagFlag ok={!!s.integration.gads_account} label="GAds account" />
+                    <DiagFlag ok={s.integration.gads_ok} label="GAds query" />
+                  </div>
+
+                  {/* Data presence grid */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10, marginBottom: 8 }}>
+                    <DiagBox title="Products" lines={[`${s.products.total} total`, `${s.products.active}A / ${s.products.draft}D / ${s.products.archived}Ar`]} />
+                    <DiagBox title="Store markets" lines={[s.store_markets.length ? s.store_markets.join(', ') : '⚠ none']} />
+                    <DiagBox title="Shopify perf" lines={[`${s.shopify_performance.days_with_data} days`, `€${s.shopify_performance.total_revenue} rev`, s.shopify_performance.date_range || '—']} />
+                    <DiagBox title="Ad spend" lines={[`${s.ad_spend.rows} rows`, `€${s.ad_spend.total_spend}`, `${s.ad_spend.total_impressions} impr`, `mkts: ${s.ad_spend.markets.join(', ') || '—'}`]} />
+                    <DiagBox title="Market revenue" lines={[`${s.market_revenue.rows} rows`, `mkts: ${s.market_revenue.markets.join(', ') || '—'}`]} />
+                  </div>
+
+                  {/* Issues */}
+                  {s.issues.length > 0 ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      {s.issues.map((iss, j) => (
+                        <div key={j} style={{ fontSize: 11, color: 'var(--amber)', display: 'flex', alignItems: 'flex-start', gap: 6 }}>
+                          <span style={{ flexShrink: 0 }}>⚠</span> {iss}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: 11, color: 'var(--green)' }}>✓ No issues — all data present</div>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      )}
+
       {/* Gold reason */}
       {batch.thesis && (
         <div style={{ position: 'relative', background: 'linear-gradient(135deg, rgba(232,184,75,0.10), rgba(232,184,75,0.03))', border: '1px solid rgba(232,184,75,0.35)', borderRadius: 12, padding: '16px 20px', boxShadow: '0 0 0 1px rgba(232,184,75,0.08), 0 4px 24px -6px rgba(232,184,75,0.35)' }}>

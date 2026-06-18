@@ -367,4 +367,101 @@ router.delete('/:batchId/stores/:bsId', async (req, res) => {
   res.json({ success: true });
 });
 
+// ── GET /api/batches/:id/diagnostics — deep per-store data health check ─────
+// Shows exactly what data exists at each stage so gaps are easy to spot.
+router.get('/:id/diagnostics', async (req, res) => {
+  const { data: batch, error } = await supabase
+    .from('biq_batches')
+    .select(`
+      id, name, batch_tag,
+      biq_batch_stores (
+        id, shopify_tag, product_count, product_count_active, product_count_draft, product_count_archived,
+        biq_stores ( id, name, shop_domain, currency, markets, gads_customer_id, gads_refresh_token, gads_ok, shopify_ok ),
+        biq_performance_daily ( date, revenue, orders, units_sold ),
+        biq_ad_spend_daily ( date, market, cost, clicks, impressions ),
+        biq_market_perf_daily ( date, market, revenue, orders, units )
+      )
+    `)
+    .eq('id', req.params.id)
+    .single();
+
+  if (error || !batch) return res.status(404).json({ error: 'Batch not found' });
+
+  const stores = (batch.biq_batch_stores || []).map(bs => {
+    const st = bs.biq_stores || {};
+    const perf = bs.biq_performance_daily || [];
+    const ads = bs.biq_ad_spend_daily || [];
+    const mkt = bs.biq_market_perf_daily || [];
+
+    const perfDates = [...new Set(perf.map(p => p.date))].sort();
+    const adsDates = [...new Set(ads.map(a => a.date))].sort();
+    const adMarkets = [...new Set(ads.map(a => a.market))];
+    const revMarkets = [...new Set(mkt.map(m => m.market))];
+    const totalRev = perf.reduce((s, p) => s + parseFloat(p.revenue || 0), 0);
+    const totalSpend = ads.reduce((s, a) => s + parseFloat(a.cost || 0), 0);
+    const totalImpr = ads.reduce((s, a) => s + (a.impressions || 0), 0);
+
+    // Identify gaps
+    const issues = [];
+    if (!st.shopify_ok) issues.push('Shopify not verified (sync to verify)');
+    if (!st.gads_refresh_token) issues.push('Google Ads not connected');
+    else if (!st.gads_customer_id) issues.push('No Google Ads account selected');
+    else if (st.gads_ok === false) issues.push('Last Google Ads query failed');
+    if (!st.markets || st.markets.length === 0) issues.push('No markets configured on store');
+    if (perf.length === 0) issues.push('No Shopify performance data (no orders matched, or not synced)');
+    if (ads.length === 0 && st.gads_customer_id) issues.push('No ad-spend rows (Google Ads returned nothing for these products)');
+    if (totalImpr === 0 && ads.length > 0) issues.push('Ad spend present but 0 impressions (CTR will be blank)');
+    const adMarketsNoGeo = adMarkets.length === 1 && adMarkets[0] === 'ALL';
+    if (adMarketsNoGeo) issues.push('Ad spend not split by country (all under ALL) — geo data unavailable');
+    const mismatchMarkets = revMarkets.filter(m => !adMarkets.includes(m) && m !== 'ALL');
+    if (mismatchMarkets.length > 0 && ads.length > 0) issues.push(`Revenue markets without matching spend: ${mismatchMarkets.join(', ')}`);
+
+    return {
+      store: st.name,
+      shop_domain: st.shop_domain,
+      currency: st.currency,
+      tag: bs.shopify_tag || batch.batch_tag || batch.name,
+      integration: {
+        shopify_ok: st.shopify_ok ?? null,
+        gads_connected: !!st.gads_refresh_token,
+        gads_account: st.gads_customer_id || null,
+        gads_ok: st.gads_ok ?? null,
+      },
+      products: {
+        total: bs.product_count || 0,
+        active: bs.product_count_active || 0,
+        draft: bs.product_count_draft || 0,
+        archived: bs.product_count_archived || 0,
+      },
+      store_markets: st.markets || [],
+      shopify_performance: {
+        days_with_data: perfDates.length,
+        date_range: perfDates.length ? `${perfDates[0]} → ${perfDates[perfDates.length - 1]}` : null,
+        total_revenue: Number(totalRev.toFixed(2)),
+      },
+      ad_spend: {
+        rows: ads.length,
+        days_with_data: adsDates.length,
+        markets: adMarkets,
+        total_spend: Number(totalSpend.toFixed(2)),
+        total_impressions: totalImpr,
+      },
+      market_revenue: {
+        rows: mkt.length,
+        markets: revMarkets,
+      },
+      issues,
+    };
+  });
+
+  // Overall summary
+  const allIssues = stores.flatMap(s => s.issues);
+  res.json({
+    batch: batch.name,
+    store_count: stores.length,
+    total_issues: allIssues.length,
+    stores,
+  });
+});
+
 module.exports = router;
