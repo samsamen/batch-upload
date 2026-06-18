@@ -28,38 +28,50 @@ async function generateBatchCode() {
 
 // ── GET /api/batches — list all batches with aggregate performance ──────────
 router.get('/', async (req, res) => {
+  // Date range filter
+  const range = req.query.range;
+  let cutoff = null;
+  if (range && range !== 'all') {
+    const days = parseInt(range);
+    if (!isNaN(days)) {
+      const d = new Date();
+      d.setDate(d.getDate() - days);
+      cutoff = d.toISOString().split('T')[0];
+    }
+  }
+
   const { data: batches, error } = await supabase
     .from('biq_batches')
     .select(`
-      id, batch_code, name, source, thesis, tags, status, created_at,
+      id, batch_code, batch_tag, name, source, thesis, tags, sub_tags, changes, status, created_at,
       biq_batch_stores (
         id, shopify_tag, product_count, notes,
         biq_stores ( id, name, shop_domain, country, currency ),
-        biq_performance_daily ( date, orders, revenue, units_sold )
+        biq_performance_daily ( date, orders, revenue, units_sold, ad_spend )
       )
     `)
     .order('created_at', { ascending: false });
 
   if (error) return res.status(500).json({ error: error.message });
 
-  // Aggregate totals per batch
+  // Aggregate totals per batch (respecting date range)
   const enriched = (batches || []).map((batch) => {
-    let totalOrders = 0;
-    let totalRevenue = 0;
-    let totalUnits = 0;
+    let totalOrders = 0, totalRevenue = 0, totalUnits = 0, totalSpend = 0;
     const storeCount = batch.biq_batch_stores?.length || 0;
 
     for (const bs of batch.biq_batch_stores || []) {
       for (const perf of bs.biq_performance_daily || []) {
+        if (cutoff && perf.date < cutoff) continue;
         totalOrders += perf.orders || 0;
         totalRevenue += parseFloat(perf.revenue || 0);
         totalUnits += perf.units_sold || 0;
+        totalSpend += parseFloat(perf.ad_spend || 0);
       }
     }
 
     return {
       ...batch,
-      totals: { orders: totalOrders, revenue: totalRevenue, units: totalUnits },
+      totals: { orders: totalOrders, revenue: totalRevenue, units: totalUnits, ad_spend: totalSpend },
       store_count: storeCount,
     };
   });
@@ -88,7 +100,7 @@ router.get('/:id', async (req, res) => {
 
 // ── POST /api/batches — create a new batch ─────────────────────────────────
 router.post('/', async (req, res) => {
-  const { name, source, thesis, validation_notes, tags, batch_tag } = req.body;
+  const { name, source, thesis, validation_notes, tags, batch_tag, sub_tags, changes, changes_note } = req.body;
 
   if (!name) return res.status(400).json({ error: 'name is required' });
 
@@ -96,7 +108,15 @@ router.post('/', async (req, res) => {
 
   const { data, error } = await supabase
     .from('biq_batches')
-    .insert({ batch_code, batch_tag: batch_tag || null, name, source, thesis, validation_notes, tags: tags || [] })
+    .insert({
+      batch_code,
+      batch_tag: batch_tag || null,
+      name, source, thesis, validation_notes,
+      tags: tags || [],
+      sub_tags: sub_tags || [],
+      changes: changes || [],
+      changes_note: changes_note || null,
+    })
     .select()
     .single();
 
@@ -104,13 +124,45 @@ router.post('/', async (req, res) => {
   res.status(201).json(data);
 });
 
+// ── GET /api/batches/suggest-name — suggest next name from last batch ──────
+router.get('/suggest-name', async (req, res) => {
+  const { data } = await supabase
+    .from('biq_batches')
+    .select('name, batch_tag, created_at')
+    .order('created_at', { ascending: false })
+    .limit(1);
+
+  const last = data?.[0];
+  if (!last) return res.json({ suggested_name: '', suggested_tag: '' });
+
+  // Find trailing number in name or tag and increment
+  const bump = (str) => {
+    if (!str) return '';
+    const m = str.match(/^(.*?)(\d+)(\D*)$/);
+    if (m) return `${m[1]}${parseInt(m[2]) + 1}${m[3]}`;
+    return ''; // no number to increment — leave blank so user names freely
+  };
+
+  res.json({
+    suggested_name: bump(last.name),
+    suggested_tag: bump(last.batch_tag),
+    last_name: last.name,
+    last_tag: last.batch_tag,
+  });
+});
+
 // ── PATCH /api/batches/:id — update batch metadata ─────────────────────────
 router.patch('/:id', async (req, res) => {
-  const { name, source, thesis, validation_notes, tags, status, batch_tag } = req.body;
+  const { name, source, thesis, validation_notes, tags, status, batch_tag, sub_tags, changes, changes_note } = req.body;
+
+  const update = {};
+  for (const [k, v] of Object.entries({ name, source, thesis, validation_notes, tags, status, batch_tag, sub_tags, changes, changes_note })) {
+    if (v !== undefined) update[k] = v;
+  }
 
   const { data, error } = await supabase
     .from('biq_batches')
-    .update({ name, source, thesis, validation_notes, tags, status, batch_tag })
+    .update(update)
     .eq('id', req.params.id)
     .select()
     .single();
@@ -119,13 +171,20 @@ router.patch('/:id', async (req, res) => {
   res.json(data);
 });
 
-// ── DELETE /api/batches/:id — archive batch ────────────────────────────────
+// ── DELETE /api/batches/:id — archive (default) or hard delete (?hard=true) ─
 router.delete('/:id', async (req, res) => {
+  const hard = req.query.hard === 'true';
+
+  if (hard) {
+    const { error } = await supabase.from('biq_batches').delete().eq('id', req.params.id);
+    if (error) return res.status(500).json({ error: error.message });
+    return res.json({ success: true, deleted: true });
+  }
+
   const { error } = await supabase
     .from('biq_batches')
     .update({ status: 'archived' })
     .eq('id', req.params.id);
-
   if (error) return res.status(500).json({ error: error.message });
   res.json({ success: true });
 });

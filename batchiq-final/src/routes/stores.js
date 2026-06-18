@@ -2,7 +2,7 @@ const express = require('express');
 const fetch = require('node-fetch');
 const supabase = require('../lib/supabase');
 const { getConfig } = require('./config');
-const { getAccessToken } = require('../lib/shopifyAuth');
+const { getAccessToken, getMarkets } = require('../lib/shopifyAuth');
 
 const router = express.Router();
 
@@ -10,7 +10,7 @@ const router = express.Router();
 router.get('/', async (req, res) => {
   const { data, error } = await supabase
     .from('biq_stores')
-    .select('id, shop_domain, name, country, currency, active, connected_at')
+    .select('id, shop_domain, name, country, currency, markets, active, connected_at')
     .eq('active', true)
     .order('name');
   if (error) return res.status(500).json({ error: error.message });
@@ -70,15 +70,20 @@ router.post('/connect', async (req, res) => {
     }
   } catch {}
 
-  // Save store. We store the token too (refreshed on each sync anyway).
+  // Fetch markets (countries) — needs read_markets scope, else falls back to shop country
+  let markets = await getMarkets(shop_domain, accessToken);
+  if (markets.length === 0 && country) markets = [country];
+
+  // Save store
   const { data, error } = await supabase.from('biq_stores').upsert(
     {
       shop_domain, name: storeName, access_token: accessToken,
       country, currency, feed_language: feed_language || null,
+      markets,
       active: true, connected_at: new Date().toISOString(),
     },
     { onConflict: 'shop_domain' }
-  ).select('id, shop_domain, name, country, currency').single();
+  ).select('id, shop_domain, name, country, currency, markets').single();
 
   if (error) return res.status(500).json({ error: error.message });
   res.status(201).json(data);
@@ -86,12 +91,18 @@ router.post('/connect', async (req, res) => {
 
 // PATCH /api/stores/:id
 router.patch('/:id', async (req, res) => {
-  const { name, country, currency } = req.body;
+  const { name, country, currency, markets } = req.body;
+  const update = {};
+  if (name !== undefined) update.name = name;
+  if (country !== undefined) update.country = country;
+  if (currency !== undefined) update.currency = currency;
+  if (markets !== undefined) update.markets = markets;
+
   const { data, error } = await supabase
     .from('biq_stores')
-    .update({ name, country, currency })
+    .update(update)
     .eq('id', req.params.id)
-    .select('id, shop_domain, name, country, currency')
+    .select('id, shop_domain, name, country, currency, markets')
     .single();
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);

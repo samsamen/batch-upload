@@ -282,6 +282,15 @@ export default function Stores() {
     catch (err) { setError(err.message); }
   }
 
+  // Detect markets covered by more than one store
+  const marketCount = {};
+  for (const s of stores) {
+    for (const m of (s.markets || [])) {
+      marketCount[m] = (marketCount[m] || 0) + 1;
+    }
+  }
+  const overlapping = Object.entries(marketCount).filter(([, n]) => n > 1).map(([m]) => m);
+
   return (
     <div>
       <div style={{
@@ -319,6 +328,16 @@ export default function Stores() {
           </div>
         )}
 
+        {/* Market overlap warning */}
+        {overlapping.length > 0 && (
+          <div style={{
+            background: 'rgba(232,184,75,0.07)', border: '1px solid rgba(232,184,75,0.25)',
+            borderRadius: 5, padding: '10px 14px', fontSize: 12, color: 'var(--gold)',
+          }}>
+            <strong>Market overlap:</strong> {overlapping.join(', ')} {overlapping.length === 1 ? 'is' : 'are'} covered by more than one store. Avoid sending the same products to stores sharing a market.
+          </div>
+        )}
+
         {/* Connected stores */}
         <div style={{ background: 'var(--s1)', border: '1px solid var(--b1)', borderRadius: 5, overflow: 'hidden' }}>
           <div style={{ padding: '12px 20px', borderBottom: '1px solid var(--b1)', fontSize: 12, fontWeight: 600, color: 'var(--t1)' }}>
@@ -334,7 +353,7 @@ export default function Stores() {
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ borderBottom: '1px solid var(--b1)' }}>
-                  {['Store', 'Domain', 'Country', 'Currency', 'Connected', ''].map(h => (
+                  {['Store', 'Domain', 'Markets', 'Currency', 'Connected', ''].map(h => (
                     <th key={h} style={{ padding: '8px 20px', textAlign: 'left', fontSize: 9, fontWeight: 600, color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '0.09em' }}>{h}</th>
                   ))}
                 </tr>
@@ -347,7 +366,21 @@ export default function Stores() {
                     onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
                     <td style={{ padding: '11px 20px', fontWeight: 600, color: 'var(--t1)', fontSize: 13 }}>{s.name}</td>
                     <td style={{ padding: '11px 20px', fontFamily: "'Fira Code', monospace", fontSize: 11, color: 'var(--t2)' }}>{s.shop_domain}</td>
-                    <td style={{ padding: '11px 20px', fontSize: 12, color: 'var(--t2)' }}>{s.country || '—'}</td>
+                    <td style={{ padding: '11px 20px' }}>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                        {(s.markets && s.markets.length > 0) ? s.markets.map(m => (
+                          <span key={m} style={{
+                            fontFamily: "'Fira Code', monospace", fontSize: 10, fontWeight: 500,
+                            padding: '1px 6px', borderRadius: 3,
+                            background: overlapping.includes(m) ? 'rgba(232,184,75,0.15)' : 'var(--s2)',
+                            color: overlapping.includes(m) ? 'var(--gold)' : 'var(--t2)',
+                            border: '1px solid ' + (overlapping.includes(m) ? 'rgba(232,184,75,0.3)' : 'var(--b1)'),
+                          }}>
+                            {m}
+                          </span>
+                        )) : <span style={{ fontSize: 11, color: 'var(--t3)' }}>—</span>}
+                      </div>
+                    </td>
                     <td style={{ padding: '11px 20px', fontSize: 12, color: 'var(--t2)' }}>{s.currency || 'EUR'}</td>
                     <td style={{ padding: '11px 20px', fontSize: 11, color: 'var(--t2)', fontFamily: "'Fira Code', monospace" }}>{fmtDate(s.connected_at)}</td>
                     <td style={{ padding: '11px 20px', textAlign: 'right' }}>

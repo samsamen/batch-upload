@@ -1,9 +1,9 @@
 -- ============================================================
--- BatchIQ — Migration: run this if you already created tables
--- before the "no-login connect" update. Safe to run multiple times.
+-- BatchIQ — Full migration. Run this in Supabase SQL Editor.
+-- Safe to run multiple times (idempotent).
 -- ============================================================
 
--- 1. Config table for Shopify keys (stored in DB, not Railway)
+-- Config table for Shopify keys (stored in DB, not Railway)
 CREATE TABLE IF NOT EXISTS biq_config (
   id                    INTEGER PRIMARY KEY DEFAULT 1,
   shopify_client_id     TEXT,
@@ -14,5 +14,12 @@ CREATE TABLE IF NOT EXISTS biq_config (
 );
 INSERT INTO biq_config (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
 
--- 2. Feed language column on stores
+-- Stores: feed language + markets
 ALTER TABLE biq_stores ADD COLUMN IF NOT EXISTS feed_language TEXT;
+ALTER TABLE biq_stores ADD COLUMN IF NOT EXISTS markets JSONB DEFAULT '[]';
+
+-- Batches: tag optional, sub-tags, change tracking
+ALTER TABLE biq_batches ALTER COLUMN batch_tag DROP NOT NULL;
+ALTER TABLE biq_batches ADD COLUMN IF NOT EXISTS sub_tags JSONB DEFAULT '[]';
+ALTER TABLE biq_batches ADD COLUMN IF NOT EXISTS changes JSONB DEFAULT '[]';
+ALTER TABLE biq_batches ADD COLUMN IF NOT EXISTS changes_note TEXT;

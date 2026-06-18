@@ -9,10 +9,10 @@ function TagChip({ tag }) {
   return (
     <span style={{
       display: 'inline-block',
-      fontFamily: 'var(--mono)', fontSize: 11, fontWeight: 500,
-      color: 'var(--gold)', border: '1px solid rgba(232,184,75,0.28)',
+      fontFamily: "'Fira Code', monospace", fontSize: 11, fontWeight: 500,
+      color: 'var(--brand)', border: '1px solid var(--b2)',
       borderRadius: 3, padding: '1px 8px',
-      letterSpacing: '0.02em', background: 'rgba(232,184,75,0.05)',
+      letterSpacing: '0.02em', background: 'var(--brand-l)',
       whiteSpace: 'nowrap',
     }}>
       {tag}
@@ -33,7 +33,7 @@ function CopyButton({ value }) {
     <button
       onClick={handleCopy}
       style={{
-        fontFamily: 'var(--mono)', fontSize: 9, fontWeight: 500,
+        fontFamily: "'Fira Code', monospace", fontSize: 9, fontWeight: 500,
         letterSpacing: '0.08em', textTransform: 'uppercase',
         color: state === 'copied' ? 'var(--green)' : 'var(--t2)',
         background: 'none',
@@ -61,7 +61,7 @@ function Label({ children, style }) {
 
 function Btn({ children, onClick, disabled, variant = 'ghost' }) {
   const styles = {
-    primary: { background: 'var(--gold)', color: '#0E0F14', border: 'none', fontWeight: 700 },
+    primary: { background: 'var(--brand)', color: '#0E0F14', border: 'none', fontWeight: 700 },
     ghost:   { background: 'transparent', color: 'var(--t2)', border: '1px solid var(--b2)', fontWeight: 500 },
     danger:  { background: 'transparent', color: 'var(--red)', border: '1px solid rgba(239,80,80,0.3)', fontWeight: 500 },
   };
@@ -151,7 +151,7 @@ function AddStoreModal({ batchId, batchTag, onClose, onAdd }) {
               {stores.map(s => <option key={s.id} value={s.id}>{s.name} — {s.shop_domain}</option>)}
             </select>
             {!loadingStores && stores.length === 0 && (
-              <div style={{ fontSize: 11, color: 'var(--gold)', marginTop: 5 }}>
+              <div style={{ fontSize: 11, color: 'var(--brand)', marginTop: 5 }}>
                 No stores connected. Go to Stores first.
               </div>
             )}
@@ -163,14 +163,14 @@ function AddStoreModal({ batchId, batchTag, onClose, onAdd }) {
               placeholder={batchTag ? `${batchTag}-fi` : 'e.g. b20-fi'}
               value={form.shopify_tag}
               onChange={set('shopify_tag')}
-              style={{ fontFamily: 'var(--mono)', fontSize: 13 }}
+              style={{ fontFamily: "'Fira Code', monospace", fontSize: 13 }}
             />
           </div>
 
           {/* Tag checklist */}
           {batchTag && form.shopify_tag && (
             <div style={{
-              background: 'rgba(232,184,75,0.04)', border: '1px solid rgba(232,184,75,0.15)',
+              background: 'var(--brand-l)', border: '1px solid var(--brand-l)',
               borderRadius: 4, padding: '10px 14px',
             }}>
               <Label style={{ marginBottom: 8 }}>Apply both tags to each product in this store</Label>
@@ -228,12 +228,12 @@ function ChartTooltip({ active, payload, label }) {
       background: 'var(--s2)', border: '1px solid var(--b2)',
       borderRadius: 4, padding: '8px 12px', fontSize: 11,
     }}>
-      <div style={{ color: 'var(--t3)', marginBottom: 4, fontFamily: 'var(--mono)' }}>{label}</div>
-      <div style={{ color: 'var(--gold)', fontFamily: 'var(--mono)', fontWeight: 500 }}>
+      <div style={{ color: 'var(--t3)', marginBottom: 4, fontFamily: "'Fira Code', monospace" }}>{label}</div>
+      <div style={{ color: 'var(--brand)', fontFamily: "'Fira Code', monospace", fontWeight: 500 }}>
         {fmtCurrency(payload[0]?.value)}
       </div>
       {payload[1] && (
-        <div style={{ color: 'var(--t2)', fontFamily: 'var(--mono)', marginTop: 2 }}>
+        <div style={{ color: 'var(--t2)', fontFamily: "'Fira Code', monospace", marginTop: 2 }}>
           {payload[1].value} orders
         </div>
       )}
@@ -281,7 +281,7 @@ export default function BatchDetail() {
   }
 
   if (loading) return (
-    <div style={{ padding: '40px 32px', fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--t3)' }}>
+    <div style={{ padding: '40px 32px', fontFamily: "'Fira Code', monospace", fontSize: 12, color: 'var(--t3)' }}>
       Loading…
     </div>
   );
@@ -338,7 +338,7 @@ export default function BatchDetail() {
           {/* Batch identity */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
             {batch.batch_tag && <TagChip tag={batch.batch_tag} />}
-            <span style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--t3)', letterSpacing: '0.04em' }}>
+            <span style={{ fontFamily: "'Fira Code', monospace", fontSize: 10, color: 'var(--t3)', letterSpacing: '0.04em' }}>
               {batch.batch_code}
             </span>
             <span style={{ fontSize: 10, color: 'var(--t3)' }}>
@@ -425,16 +425,16 @@ export default function BatchDetail() {
                 <CartesianGrid stroke="var(--b1)" strokeDasharray="0" vertical={false} />
                 <XAxis
                   dataKey="date"
-                  tick={{ fill: 'var(--t3)', fontSize: 10, fontFamily: 'var(--mono)' }}
+                  tick={{ fill: 'var(--t3)', fontSize: 10, fontFamily: "'Fira Code', monospace" }}
                   axisLine={false} tickLine={false}
                 />
                 <YAxis
-                  tick={{ fill: 'var(--t3)', fontSize: 10, fontFamily: 'var(--mono)' }}
+                  tick={{ fill: 'var(--t3)', fontSize: 10, fontFamily: "'Fira Code', monospace" }}
                   axisLine={false} tickLine={false}
                   tickFormatter={v => `€${v}`}
                 />
                 <Tooltip content={<ChartTooltip />} />
-                <Line type="monotone" dataKey="revenue" stroke="var(--gold)" strokeWidth={1.5} dot={false} />
+                <Line type="monotone" dataKey="revenue" stroke="var(--brand)" strokeWidth={1.5} dot={false} />
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -495,16 +495,16 @@ export default function BatchDetail() {
                         <CopyButton value={bs.shopify_tag} />
                       </div>
                     </td>
-                    <td style={{ padding: '12px 20px', fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--t2)' }}>
+                    <td style={{ padding: '12px 20px', fontFamily: "'Fira Code', monospace", fontSize: 12, color: 'var(--t2)' }}>
                       {bs.product_count || 0}
                     </td>
-                    <td style={{ padding: '12px 20px', fontFamily: 'var(--mono)', fontSize: 13, fontWeight: 500, color: bs.totals.revenue > 0 ? 'var(--gold)' : 'var(--t3)' }}>
+                    <td style={{ padding: '12px 20px', fontFamily: "'Fira Code', monospace", fontSize: 13, fontWeight: 500, color: bs.totals.revenue > 0 ? 'var(--brand)' : 'var(--t3)' }}>
                       {fmtCurrency(bs.totals.revenue)}
                     </td>
-                    <td style={{ padding: '12px 20px', fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--t2)' }}>
+                    <td style={{ padding: '12px 20px', fontFamily: "'Fira Code', monospace", fontSize: 12, color: 'var(--t2)' }}>
                       {bs.totals.orders}
                     </td>
-                    <td style={{ padding: '12px 20px', fontFamily: 'var(--mono)', fontSize: 12, color: 'var(--t2)' }}>
+                    <td style={{ padding: '12px 20px', fontFamily: "'Fira Code', monospace", fontSize: 12, color: 'var(--t2)' }}>
                       {bs.totals.units}
                     </td>
                     <td style={{ padding: '12px 20px', textAlign: 'right' }}>
@@ -513,7 +513,7 @@ export default function BatchDetail() {
                           onClick={() => syncStore(bs.biq_stores?.id)}
                           disabled={syncing === bs.biq_stores?.id}
                           style={{
-                            fontFamily: 'var(--mono)', fontSize: 9, textTransform: 'uppercase',
+                            fontFamily: "'Fira Code', monospace", fontSize: 9, textTransform: 'uppercase',
                             letterSpacing: '0.08em', color: 'var(--t2)', background: 'none',
                             border: '1px solid var(--b2)', borderRadius: 3, padding: '2px 8px',
                             cursor: 'pointer', height: 20,
@@ -525,7 +525,7 @@ export default function BatchDetail() {
                         <button
                           onClick={() => removeStore(bs.id)}
                           style={{
-                            fontFamily: 'var(--mono)', fontSize: 9, textTransform: 'uppercase',
+                            fontFamily: "'Fira Code', monospace", fontSize: 9, textTransform: 'uppercase',
                             letterSpacing: '0.08em', color: 'var(--t3)', background: 'none',
                             border: '1px solid var(--b1)', borderRadius: 3, padding: '2px 8px',
                             cursor: 'pointer', height: 20, transition: 'color 0.1s, border-color 0.1s',
@@ -571,8 +571,8 @@ function BigStat({ label, value, gold }) {
     <div>
       <Label style={{ marginBottom: 4 }}>{label}</Label>
       <div style={{
-        fontFamily: 'var(--mono)', fontSize: 20, fontWeight: 500,
-        color: gold ? 'var(--gold)' : 'var(--t1)',
+        fontFamily: "'Fira Code', monospace", fontSize: 20, fontWeight: 500,
+        color: gold ? 'var(--brand)' : 'var(--t1)',
       }}>
         {value}
       </div>

@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS biq_stores (
   country       TEXT,
   currency      TEXT DEFAULT 'EUR',
   feed_language TEXT,
+  markets       JSONB DEFAULT '[]',   -- country codes this store sells to
   active        BOOLEAN DEFAULT true,
   connected_at  TIMESTAMPTZ DEFAULT NOW()
 );
@@ -26,6 +27,9 @@ CREATE TABLE IF NOT EXISTS biq_batches (
   thesis            TEXT,                  -- why you think it works
   validation_notes  TEXT,                  -- proof, signals, data
   tags              TEXT[] DEFAULT '{}',   -- e.g. {summer, impulse-buy, fashion}
+  sub_tags          JSONB DEFAULT '[]',    -- [{tag, description}] refinements
+  changes           JSONB DEFAULT '[]',    -- what changed: pricing/branding/template/creatives
+  changes_note      TEXT,                  -- free-text change note
   status            TEXT DEFAULT 'active', -- active / paused / archived
   created_at        TIMESTAMPTZ DEFAULT NOW()
 );
