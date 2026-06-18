@@ -64,3 +64,50 @@ ALTER TABLE biq_stores ADD COLUMN IF NOT EXISTS client_secret TEXT;
 ALTER TABLE biq_batch_stores ADD COLUMN IF NOT EXISTS product_count_active INTEGER DEFAULT 0;
 ALTER TABLE biq_batch_stores ADD COLUMN IF NOT EXISTS product_count_draft INTEGER DEFAULT 0;
 ALTER TABLE biq_batch_stores ADD COLUMN IF NOT EXISTS product_count_archived INTEGER DEFAULT 0;
+
+-- ============================================================
+-- Google Ads integration
+-- ============================================================
+
+-- OAuth credentials (shared app-level: client id/secret/developer token + a single refresh token set)
+ALTER TABLE biq_config ADD COLUMN IF NOT EXISTS gads_client_id TEXT;
+ALTER TABLE biq_config ADD COLUMN IF NOT EXISTS gads_client_secret TEXT;
+ALTER TABLE biq_config ADD COLUMN IF NOT EXISTS gads_developer_token TEXT;
+ALTER TABLE biq_config ADD COLUMN IF NOT EXISTS gads_login_customer_id TEXT;   -- MCC id (digits only)
+ALTER TABLE biq_config ADD COLUMN IF NOT EXISTS gads_refresh_token TEXT;       -- obtained via OAuth consent
+
+-- Per store: which Google Ads account (customer id) powers this store
+ALTER TABLE biq_stores ADD COLUMN IF NOT EXISTS gads_customer_id TEXT;         -- digits only, no dashes
+
+-- Daily ad spend per batch-store per market (geo). Appends like performance_daily.
+CREATE TABLE IF NOT EXISTS biq_ad_spend_daily (
+  id              UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  batch_store_id  UUID REFERENCES biq_batch_stores(id) ON DELETE CASCADE,
+  date            DATE NOT NULL,
+  market          TEXT,                  -- country code (geo), or 'ALL' when not segmented
+  cost            NUMERIC DEFAULT 0,     -- spend in account currency
+  conversions     NUMERIC DEFAULT 0,
+  conversion_value NUMERIC DEFAULT 0,    -- Google-reported conv value (for cross-check)
+  clicks          INTEGER DEFAULT 0,
+  impressions     INTEGER DEFAULT 0,
+  synced_at       TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(batch_store_id, date, market)
+);
+CREATE INDEX IF NOT EXISTS idx_ad_spend_bs_date ON biq_ad_spend_daily(batch_store_id, date);
+
+-- Cache markets/geo revenue split per batch-store per market too (from Shopify orders)
+CREATE TABLE IF NOT EXISTS biq_market_perf_daily (
+  id              UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  batch_store_id  UUID REFERENCES biq_batch_stores(id) ON DELETE CASCADE,
+  date            DATE NOT NULL,
+  market          TEXT,
+  revenue         NUMERIC DEFAULT 0,
+  orders          INTEGER DEFAULT 0,
+  units           INTEGER DEFAULT 0,
+  synced_at       TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(batch_store_id, date, market)
+);
+CREATE INDEX IF NOT EXISTS idx_market_perf_bs_date ON biq_market_perf_daily(batch_store_id, date);
+
+-- Per-store Google Ads refresh token (each store connects its own Google account)
+ALTER TABLE biq_stores ADD COLUMN IF NOT EXISTS gads_refresh_token TEXT;

@@ -87,6 +87,8 @@ async function getOrdersForRange(store, fromDate, toDate) {
             id
             createdAt
             displayFinancialStatus
+            shippingAddress { countryCodeV2 }
+            billingAddress { countryCodeV2 }
             lineItems(first: 100) {
               nodes {
                 quantity
@@ -108,7 +110,12 @@ async function getOrdersForRange(store, fromDate, toDate) {
         price: parseFloat(li.discountedUnitPriceSet?.shopMoney?.amount ?? li.originalUnitPriceSet?.shopMoney?.amount ?? '0'),
         product_id: li.product?.id ? String(li.product.id).split('/').pop() : null,
       }));
-      orders.push({ id: o.id, created_at: o.createdAt, line_items });
+      orders.push({
+        id: o.id,
+        created_at: o.createdAt,
+        country: o.shippingAddress?.countryCodeV2 || o.billingAddress?.countryCodeV2 || null,
+        line_items,
+      });
     }
     hasNext = conn.pageInfo.hasNextPage;
     cursor = conn.pageInfo.endCursor;

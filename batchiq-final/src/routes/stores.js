@@ -10,12 +10,21 @@ const router = express.Router();
 router.get('/', async (req, res) => {
   let q = supabase
     .from('biq_stores')
-    .select('id, shop_domain, name, country, currency, markets, active, connected_at')
+    .select('id, shop_domain, name, country, currency, markets, active, connected_at, gads_customer_id, gads_refresh_token, access_token, client_id')
     .order('name');
   if (req.query.include !== 'all') q = q.eq('active', true);
   const { data, error } = await q;
   if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
+  // Derive status flags without leaking secrets
+  const out = (data || []).map(s => ({
+    id: s.id, shop_domain: s.shop_domain, name: s.name, country: s.country,
+    currency: s.currency, markets: s.markets, active: s.active, connected_at: s.connected_at,
+    gads_customer_id: s.gads_customer_id || null,
+    shopify_verified: !!(s.access_token && s.client_id),
+    gads_connected: !!s.gads_refresh_token,
+    gads_linked: !!(s.gads_refresh_token && s.gads_customer_id),
+  }));
+  res.json(out);
 });
 
 // POST /api/stores/connect — add a store using ITS OWN client credentials.

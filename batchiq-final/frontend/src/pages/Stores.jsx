@@ -15,6 +15,30 @@ function Label({ children }) {
   );
 }
 
+function GadsGlyph({ light }) {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0 }}>
+      <path d="M12 11v2.6h4.3c-.2 1.1-1.4 3.2-4.3 3.2a4.8 4.8 0 1 1 0-9.6c1.4 0 2.4.6 3 1.1l1.8-1.7C15.6 5.5 14 4.8 12 4.8a7.2 7.2 0 1 0 0 14.4c4.2 0 7-2.9 7-7 0-.5 0-.8-.1-1.2H12z" fill={light ? '#fff' : '#34A853'} />
+    </svg>
+  );
+}
+
+function StatusDot({ on, label, onText, offText }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+      <span style={{
+        width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
+        background: on ? 'var(--green)' : 'var(--t4, #9aa0ac)',
+        boxShadow: on ? '0 0 0 3px rgba(56,217,138,0.18)' : 'none',
+      }} />
+      <span style={{ fontSize: 10.5, color: 'var(--t2)' }}>
+        <span style={{ fontWeight: 600 }}>{label}</span>
+        <span style={{ color: on ? 'var(--green)' : 'var(--t3)', marginLeft: 5, fontWeight: 600 }}>{on ? onText : offText}</span>
+      </span>
+    </div>
+  );
+}
+
 function Btn({ children, onClick, disabled, variant = 'ghost', full }) {
   const styles = {
     primary: { background: 'linear-gradient(135deg, #818CF8, #6366F1)', color: '#fff', border: 'none', fontWeight: 700, boxShadow: 'var(--sh-brand)' },
@@ -251,6 +275,7 @@ function EditStoreModal({ store, onClose, onSaved }) {
     shop_domain: store.shop_domain || '',
     currency: store.currency || 'EUR',
     markets: (store.markets || []).join(', '),
+    gads_customer_id: store.gads_customer_id || '',
     client_id: '',
     client_secret: '',
   });
@@ -271,7 +296,12 @@ function EditStoreModal({ store, onClose, onSaved }) {
       if (form.client_id.trim()) body.client_id = form.client_id.trim();
       if (form.client_secret.trim()) body.client_secret = form.client_secret.trim();
       const updated = await api.patch(`/api/stores/${store.id}`, body);
-      onSaved(updated); onClose();
+      // Save Google Ads account id separately
+      const gadsId = form.gads_customer_id.replace(/\D/g, '');
+      if (gadsId !== (store.gads_customer_id || '')) {
+        await api.patch(`/api/google-ads/store/${store.id}`, { gads_customer_id: gadsId });
+      }
+      onSaved({ ...updated, gads_customer_id: gadsId }); onClose();
     } catch (err) { setError(err.message); } finally { setLoading(false); }
   }
 
@@ -316,6 +346,13 @@ function EditStoreModal({ store, onClose, onSaved }) {
           <div style={{ fontSize: 10.5, color: 'var(--t3)' }}>Country codes, comma-separated (e.g. FI, SE, NO). "Pull from Shopify" reads them from your store's Markets (needs read_markets scope).</div>
 
           <div style={{ height: 1, background: 'var(--b1)', margin: '2px 0' }} />
+          <div>
+            <Label>Google Ads account ID</Label>
+            <input placeholder="e.g. 1234567890 (digits only)" value={form.gads_customer_id} onChange={set('gads_customer_id')} style={{ fontFamily: "'Fira Code', monospace", fontSize: 12 }} />
+            <div style={{ fontSize: 10.5, color: 'var(--t3)', marginTop: 4 }}>The Google Ads customer ID for this store. Spend &amp; ROAS pull from this account on each sync. Connect Google Ads first under Settings.</div>
+          </div>
+
+          <div style={{ height: 1, background: 'var(--b1)', margin: '2px 0' }} />
           <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--t2)' }}>App credentials <span style={{ fontWeight: 500, color: 'var(--t3)' }}>(leave empty to keep current)</span></div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <div><Label>Client ID</Label><input placeholder="paste to update" value={form.client_id} onChange={set('client_id')} style={{ fontFamily: "'Fira Code', monospace", fontSize: 12 }} /></div>
@@ -332,6 +369,65 @@ function EditStoreModal({ store, onClose, onSaved }) {
   );
 }
 
+// ── One-time Google Ads OAuth credentials (collapsible) ─────────────────────────
+function GadsCredentialsBlock({ cfg, onSaved }) {
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState({ client_id: '', client_secret: '', developer_token: '', login_customer_id: '' });
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState(null);
+  const [err, setErr] = useState(null);
+  const set = (k) => (e) => setForm(f => ({ ...f, [k]: e.target.value }));
+
+  useEffect(() => {
+    if (cfg) setForm(f => ({ ...f, client_id: cfg.client_id || '', login_customer_id: cfg.login_customer_id || '' }));
+  }, [cfg]);
+
+  const ready = cfg?.ready;
+  const redirectUri = `${window.location.origin}/api/google-ads/callback`;
+
+  async function save() {
+    setSaving(true); setErr(null); setMsg(null);
+    try { await api.post('/api/google-ads/config', form); setMsg('Saved.'); onSaved && onSaved(); }
+    catch (e) { setErr(e.message); } finally { setSaving(false); }
+  }
+
+  return (
+    <div style={{ background: 'var(--s1)', border: '1px solid var(--b1)', borderRadius: 12, overflow: 'hidden' }}>
+      <button onClick={() => setOpen(o => !o)} style={{
+        width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        padding: '12px 18px', background: 'none', border: 'none', cursor: 'pointer',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{ width: 8, height: 8, borderRadius: '50%', background: ready ? 'var(--green)' : 'var(--amber)', boxShadow: ready ? '0 0 0 3px rgba(56,217,138,0.18)' : 'none' }} />
+          <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--t1)' }}>Google Ads API keys</span>
+          <span style={{ fontSize: 11, color: 'var(--t3)' }}>{ready ? 'configured — one-time setup done' : 'one-time setup required to use Google Ads'}</span>
+        </div>
+        <span style={{ transform: open ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s', color: 'var(--t3)' }}>▸</span>
+      </button>
+
+      {open && (
+        <div style={{ padding: '4px 18px 18px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {msg && <div style={{ background: 'var(--green-bg)', border: '1px solid var(--green)', borderRadius: 8, padding: '8px 12px', fontSize: 12, color: 'var(--green)', fontWeight: 600 }}>{msg}</div>}
+          {err && <div style={{ background: 'var(--red-bg)', border: '1px solid var(--red)', borderRadius: 8, padding: '8px 12px', fontSize: 12, color: 'var(--red)', fontWeight: 600 }}>{err}</div>}
+          <div style={{ fontSize: 11, color: 'var(--t2)', lineHeight: 1.6 }}>
+            These are your Google Cloud OAuth app keys — entered once, shared by all stores. Each store then connects its own Google account with its own button below.
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div><Label>OAuth Client ID</Label><input value={form.client_id} onChange={set('client_id')} placeholder="…apps.googleusercontent.com" style={{ fontFamily: "'Fira Code', monospace", fontSize: 12 }} /></div>
+            <div><Label>OAuth Client Secret</Label><input type="password" value={form.client_secret} onChange={set('client_secret')} placeholder={cfg?.has_client_secret ? 'saved — paste to change' : 'GOCSPX-…'} style={{ fontFamily: "'Fira Code', monospace", fontSize: 12 }} /></div>
+            <div><Label>Developer Token</Label><input type="password" value={form.developer_token} onChange={set('developer_token')} placeholder={cfg?.has_developer_token ? 'saved — paste to change' : 'developer token'} style={{ fontFamily: "'Fira Code', monospace", fontSize: 12 }} /></div>
+            <div><Label>MCC / Login Customer ID</Label><input value={form.login_customer_id} onChange={set('login_customer_id')} placeholder="123930783" style={{ fontFamily: "'Fira Code', monospace", fontSize: 12 }} /></div>
+          </div>
+          <div style={{ fontSize: 10.5, color: 'var(--t3)', lineHeight: 1.6 }}>
+            Add this redirect URI to your OAuth client in Google Cloud Console: <span style={{ fontFamily: "'Fira Code', monospace", color: 'var(--t2)' }}>{redirectUri}</span>
+          </div>
+          <div><Btn onClick={save} disabled={saving} variant="primary">{saving ? 'Saving…' : 'Save keys'}</Btn></div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Stores Page ───────────────────────────────────────────────────────────────
 export default function Stores() {
   const [stores, setStores]       = useState([]);
@@ -343,12 +439,18 @@ export default function Stores() {
   const [syncingId, setSyncingId] = useState(null);
   const [syncingAll, setSyncingAll] = useState(false);
   const [editStore, setEditStore] = useState(null);
+  const [gadsCfg, setGadsCfg] = useState(null);
+  const [gadsConnecting, setGadsConnecting] = useState(null);
   const [searchParams]            = useSearchParams();
 
   useEffect(() => {
     const c = searchParams.get('connected');
     if (c) { setSuccess(`${decodeURIComponent(c)} connected.`); window.history.replaceState({}, '', '/stores'); }
-    load(); loadConfig();
+    const gc = searchParams.get('gads_connected');
+    if (gc) { setSuccess('Google Ads connected for the store. Now pick the account ID in Edit.'); window.history.replaceState({}, '', '/stores'); }
+    const ge = searchParams.get('gads_error');
+    if (ge) { setError(`Google Ads: ${decodeURIComponent(ge)}`); window.history.replaceState({}, '', '/stores'); }
+    load(); loadConfig(); loadGadsCfg();
   }, []);
 
   async function load() {
@@ -357,6 +459,25 @@ export default function Stores() {
   }
   async function loadConfig() {
     try { setConfig(await api.get('/api/config')); } catch {}
+  }
+  async function loadGadsCfg() {
+    try { setGadsCfg(await api.get('/api/google-ads/config')); } catch {}
+  }
+
+  async function connectGads(storeId) {
+    setGadsConnecting(storeId); setError(null);
+    try {
+      const { url } = await api.get(`/api/google-ads/auth-url?store_id=${storeId}`);
+      window.location.href = url;
+    } catch (err) { setError(err.message); setGadsConnecting(null); }
+  }
+
+  async function disconnectGads(storeId, name) {
+    if (!confirm(`Disconnect ${name} from Google Ads?`)) return;
+    try {
+      await api.post(`/api/google-ads/store/${storeId}/disconnect`, {});
+      setStores(p => p.map(s => s.id === storeId ? { ...s, gads_connected: false, gads_linked: false, gads_customer_id: null } : s));
+    } catch (err) { setError(err.message); }
   }
 
   function onConnected(store) {
@@ -412,7 +533,9 @@ export default function Stores() {
   }
 
   function onStoreSaved(updated) {
-    setStores(p => p.map(s => s.id === updated.id ? { ...s, ...updated } : s));
+    setStores(p => p.map(s => s.id === updated.id
+      ? { ...s, ...updated, gads_linked: !!updated.gads_customer_id }
+      : s));
     setSuccess(`${updated.name} updated.`);
   }
 
@@ -479,6 +602,9 @@ export default function Stores() {
           </div>
         )}
 
+        {/* One-time Google Ads OAuth credentials */}
+        <GadsCredentialsBlock cfg={gadsCfg} onSaved={loadGadsCfg} />
+
         {/* Connected stores */}
         <div style={{ background: 'var(--s1)', border: '1px solid var(--b1)', borderRadius: 5, overflow: 'hidden' }}>
           <div style={{ padding: '12px 20px', borderBottom: '1px solid var(--b1)', fontSize: 12, fontWeight: 600, color: 'var(--t1)' }}>
@@ -494,7 +620,7 @@ export default function Stores() {
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ borderBottom: '1px solid var(--b1)' }}>
-                  {['Store', 'Domain', 'Markets', 'Currency', 'Connected', ''].map(h => (
+                  {['Store', 'Domain', 'Status', 'Markets', 'Currency', 'Connected', ''].map(h => (
                     <th key={h} style={{ padding: '8px 20px', textAlign: 'left', fontSize: 9, fontWeight: 600, color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '0.09em' }}>{h}</th>
                   ))}
                 </tr>
@@ -512,6 +638,12 @@ export default function Stores() {
                       </div>
                     </td>
                     <td style={{ padding: '11px 20px', fontFamily: "'Fira Code', monospace", fontSize: 11, color: 'var(--t2)' }}>{s.shop_domain}</td>
+                    <td style={{ padding: '11px 20px' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                        <StatusDot on={s.shopify_verified} label="Shopify" onText="Verified" offText="Not verified" />
+                        <StatusDot on={s.gads_linked} label="Google Ads" onText="Active" offText={s.gads_connected ? 'Pick account' : 'Not connected'} />
+                      </div>
+                    </td>
                     <td style={{ padding: '11px 20px' }}>
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                         {(s.markets && s.markets.length > 0) ? s.markets.map(m => (
@@ -552,6 +684,20 @@ export default function Stores() {
                               onMouseLeave={e => { e.currentTarget.style.background = 'var(--s1)'; }}>
                               Edit
                             </button>
+                            {s.gads_connected ? (
+                              <button onClick={() => disconnectGads(s.id, s.name)}
+                                style={{ fontSize: 12, fontWeight: 600, color: 'var(--t1)', background: 'var(--s1)', border: '1px solid var(--b2)', borderRadius: 8, padding: '7px 14px', cursor: 'pointer', transition: 'all 0.12s', display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                                onMouseEnter={e => { e.currentTarget.style.background = 'var(--s3)'; }}
+                                onMouseLeave={e => { e.currentTarget.style.background = 'var(--s1)'; }}>
+                                <GadsGlyph /> Google Ads connected
+                              </button>
+                            ) : (
+                              <button onClick={() => connectGads(s.id)} disabled={!gadsCfg?.ready || gadsConnecting === s.id}
+                                style={{ fontSize: 12, fontWeight: 700, color: '#fff', background: 'linear-gradient(135deg, #34A853, #1a7a3a)', border: 'none', borderRadius: 8, padding: '7px 14px', cursor: gadsCfg?.ready ? 'pointer' : 'not-allowed', opacity: gadsCfg?.ready ? 1 : 0.5, display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                                title={gadsCfg?.ready ? '' : 'Enter the Google Ads API keys first (block above)'}>
+                                <GadsGlyph light /> {gadsConnecting === s.id ? 'Opening…' : 'Connect Google Ads'}
+                              </button>
+                            )}
                             <button onClick={() => disconnect(s.id, s.name)}
                               style={{ fontSize: 12, fontWeight: 600, color: 'var(--t1)', background: 'var(--s1)', border: '1px solid var(--b2)', borderRadius: 8, padding: '7px 14px', cursor: 'pointer', transition: 'all 0.12s' }}
                               onMouseEnter={e => { e.currentTarget.style.color = 'var(--red)'; e.currentTarget.style.borderColor = 'var(--red)'; e.currentTarget.style.background = 'var(--red-bg)'; }}

@@ -88,14 +88,43 @@ router.get('/:id', async (req, res) => {
       id, batch_code, batch_tag, name, source, thesis, validation_notes, tags, sub_tags, changes, changes_note, status, created_at,
       biq_batch_stores (
         id, shopify_tag, product_count, product_count_active, product_count_draft, product_count_archived, notes, added_at,
-        biq_stores ( id, name, shop_domain, country, currency, markets ),
-        biq_performance_daily ( date, orders, revenue, units_sold, ad_spend, clicks, impressions )
+        biq_stores ( id, name, shop_domain, country, currency, markets, gads_customer_id ),
+        biq_performance_daily ( date, orders, revenue, units_sold ),
+        biq_ad_spend_daily ( date, market, cost, conversions, conversion_value, clicks, impressions ),
+        biq_market_perf_daily ( date, market, revenue, orders, units )
       )
     `)
     .eq('id', req.params.id)
     .single();
 
   if (error || !data) return res.status(404).json({ error: 'Batch not found' });
+
+  // Build per-store and per-market rollups so the frontend doesn't have to
+  for (const bs of (data.biq_batch_stores || [])) {
+    const revenue = (bs.biq_performance_daily || []).reduce((s, p) => s + parseFloat(p.revenue || 0), 0);
+    const orders = (bs.biq_performance_daily || []).reduce((s, p) => s + (p.orders || 0), 0);
+    const units = (bs.biq_performance_daily || []).reduce((s, p) => s + (p.units_sold || 0), 0);
+    const spend = (bs.biq_ad_spend_daily || []).reduce((s, a) => s + parseFloat(a.cost || 0), 0);
+
+    // Per-market: combine revenue (market_perf) + spend (ad_spend)
+    const mkt = {};
+    for (const m of (bs.biq_market_perf_daily || [])) {
+      const k = m.market || 'ALL';
+      if (!mkt[k]) mkt[k] = { market: k, revenue: 0, orders: 0, units: 0, spend: 0 };
+      mkt[k].revenue += parseFloat(m.revenue || 0);
+      mkt[k].orders += (m.orders || 0);
+      mkt[k].units += (m.units || 0);
+    }
+    for (const a of (bs.biq_ad_spend_daily || [])) {
+      const k = a.market || 'ALL';
+      if (!mkt[k]) mkt[k] = { market: k, revenue: 0, orders: 0, units: 0, spend: 0 };
+      mkt[k].spend += parseFloat(a.cost || 0);
+    }
+    const markets = Object.values(mkt).map(m => ({ ...m, roas: m.spend > 0 ? m.revenue / m.spend : null })).sort((a, b) => b.revenue - a.revenue);
+
+    bs.rollup = { revenue, orders, units, spend, roas: spend > 0 ? revenue / spend : null, markets };
+  }
+
   res.json(data);
 });
 

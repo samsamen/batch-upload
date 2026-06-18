@@ -145,12 +145,18 @@ function ActionMenu({ batch, onAction }) {
 // ═══ Batch form modal (shared by Create + Edit) ═══════════════════════════════
 function BatchModal({ mode, batch, onClose, onSaved }) {
   const isEdit = mode === 'edit';
+  // If an existing source is stored as "Other: xyz", split it back into the dropdown + text
+  const _srcRaw = batch?.source || '';
+  const _isOther = _srcRaw.startsWith('Other:');
   const [form, setForm] = useState({
-    name: batch?.name || '', batch_tag: batch?.batch_tag || '', source: batch?.source || '',
+    name: batch?.name || '', batch_tag: batch?.batch_tag || '',
+    source: _isOther ? 'Other' : _srcRaw,
+    source_other: _isOther ? _srcRaw.replace(/^Other:\s*/, '') : '',
     thesis: batch?.thesis || '', validation_notes: batch?.validation_notes || '',
     tags: (batch?.tags || []).join(', '), changes_note: batch?.changes_note || '',
   });
   const [subTags, setSubTags] = useState(batch?.sub_tags || []);
+  const [nameIsTag, setNameIsTag] = useState(isEdit ? !batch?.batch_tag : true);
   const [changes, setChanges] = useState(batch?.changes || []);
   const [suggestion, setSuggestion] = useState(null);
   const [stores, setStores] = useState([]);
@@ -185,11 +191,16 @@ function BatchModal({ mode, batch, onClose, onSaved }) {
 
   async function submit() {
     if (!form.name.trim()) { setError('Batch name is required.'); return; }
+    if (form.source === 'Other' && !form.source_other.trim()) { setError('You selected "Other" as source — please specify it.'); return; }
     setLoading(true); setError(null);
     try {
       const tags = form.tags.split(',').map(t => t.trim()).filter(Boolean);
       const sub = subTags.filter(s => s.tag.trim()).map(s => ({ tag: s.tag.trim(), description: s.description.trim() }));
-      const payload = { ...form, batch_tag: form.batch_tag.trim() || null, tags, sub_tags: sub, changes };
+      // Fold "Other" free-text into the saved source value
+      const effectiveSource = form.source === 'Other' ? `Other: ${form.source_other.trim()}` : form.source;
+      const batchTag = nameIsTag ? null : (form.batch_tag.trim() || null);
+      const payload = { ...form, source: effectiveSource, batch_tag: batchTag, tags, sub_tags: sub, changes };
+      delete payload.source_other;
       // On create, attach selected stores
       if (!isEdit) {
         payload.store_links = Object.entries(storeLinks)
@@ -217,9 +228,44 @@ function BatchModal({ mode, batch, onClose, onSaved }) {
         <div style={{ padding: 26, display: 'flex', flexDirection: 'column', gap: 18 }}>
           {error && <div style={{ background: 'var(--red-bg)', border: '1px solid var(--red)', borderRadius: 9, padding: '10px 14px', fontSize: 12.5, color: 'var(--red)', fontWeight: 600 }}>{error}</div>}
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 160px', gap: 12 }}>
-            <div><Label>Batch name</Label><input placeholder="e.g. BATCH5-VIVL" value={form.name} onChange={set('name')} /></div>
-            <div><Label>Shopify tag <span style={{ color: 'var(--t4)', fontWeight: 500, textTransform: 'none', letterSpacing: 0 }}>(optional)</span></Label><input placeholder="empty" value={form.batch_tag} onChange={set('batch_tag')} style={{ fontFamily: "'Fira Code', monospace", fontSize: 12 }} /></div>
+          <div>
+            <Label>Batch name</Label>
+            <input placeholder="e.g. BATCH5-VIVL" value={form.name} onChange={set('name')} />
+          </div>
+
+          {/* Toggle: batch name IS the Shopify tag */}
+          <div style={{ marginTop: -8 }}>
+            <button
+              onClick={() => setNameIsTag(v => !v)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer',
+                background: 'none', border: 'none', padding: 0, textAlign: 'left',
+              }}
+            >
+              <span style={{
+                width: 38, height: 22, borderRadius: 999, flexShrink: 0,
+                background: nameIsTag ? 'linear-gradient(135deg, #818CF8, #6366F1)' : 'var(--b2)',
+                position: 'relative', transition: 'background 0.15s', boxShadow: nameIsTag ? 'var(--sh-brand)' : 'none',
+              }}>
+                <span style={{
+                  position: 'absolute', top: 2, left: nameIsTag ? 18 : 2,
+                  width: 18, height: 18, borderRadius: '50%', background: '#fff',
+                  transition: 'left 0.15s', boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
+                }} />
+              </span>
+              <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--t1)' }}>
+                The batch name is also the Shopify tag
+              </span>
+            </button>
+            {!nameIsTag && (
+              <div style={{ marginTop: 10 }}>
+                <Label>Shopify tag</Label>
+                <input placeholder="custom tag on the products" value={form.batch_tag} onChange={set('batch_tag')} style={{ fontFamily: "'Fira Code', monospace", fontSize: 12 }} />
+                <div style={{ fontSize: 10.5, color: 'var(--t3)', marginTop: 4 }}>
+                  Use this when the products are tagged differently from the batch name.
+                </div>
+              </div>
+            )}
           </div>
 
           {!isEdit && suggestion?.last_name && (
@@ -228,8 +274,8 @@ function BatchModal({ mode, batch, onClose, onSaved }) {
 
           <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-              <Label>Sub-tags <span style={{ color: 'var(--t4)', fontWeight: 500, textTransform: 'none', letterSpacing: 0 }}>— refinements</span></Label>
-              <button onClick={addSub} style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--brand)', padding: '3px 10px', borderRadius: 6, border: '1px solid var(--brand-l)', background: 'var(--brand-l)', cursor: 'pointer' }}>+ Add</button>
+              <Label>Extra tags <span style={{ color: 'var(--t4)', fontWeight: 500, textTransform: 'none', letterSpacing: 0 }}>— other tags used for these products</span></Label>
+              <button onClick={addSub} style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--brand)', padding: '3px 10px', borderRadius: 6, border: '1px solid var(--brand-l)', background: 'var(--brand-l)', cursor: 'pointer' }}>+ Add tag</button>
             </div>
             {subTags.length === 0
               ? <div style={{ fontSize: 11.5, color: 'var(--t3)', fontStyle: 'italic' }}>e.g. "-A1" with note "premium pricing variant".</div>
@@ -255,7 +301,22 @@ function BatchModal({ mode, batch, onClose, onSaved }) {
             <input placeholder="Or describe something else…" value={form.changes_note} onChange={set('changes_note')} />
           </div>
 
-          <div><Label>Source</Label><select value={form.source} onChange={set('source')}><option value="">Where did you find these?</option>{SOURCES.map(s => <option key={s} value={s}>{s}</option>)}</select></div>
+          <div>
+            <Label>Source</Label>
+            <select value={form.source} onChange={set('source')}>
+              <option value="">Where did you find these?</option>
+              {SOURCES.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+            {form.source === 'Other' && (
+              <input
+                style={{ marginTop: 8 }}
+                placeholder="Specify the source…"
+                value={form.source_other}
+                onChange={set('source_other')}
+                autoFocus
+              />
+            )}
+          </div>
           <div><Label>Thesis</Label><textarea rows={2} placeholder="Why you think this will perform." value={form.thesis} onChange={set('thesis')} style={{ resize: 'vertical' }} /></div>
           <div><Label>Validation</Label><textarea rows={2} placeholder="Social proof, competitor signals, trends." value={form.validation_notes} onChange={set('validation_notes')} style={{ resize: 'vertical' }} /></div>
           <div><Label>Labels (comma-separated)</Label><input placeholder="summer, impulse-buy, fashion" value={form.tags} onChange={set('tags')} /></div>

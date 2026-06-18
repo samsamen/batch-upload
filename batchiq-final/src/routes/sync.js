@@ -4,8 +4,57 @@ const { getProductsByTag, getOrdersForRange, calcPerformance } = require('../lib
 const { getAccessToken, getMarkets } = require('../lib/shopifyAuth');
 const { getConfig } = require('./config');
 const { logActivity } = require('../lib/activity');
+const gads = require('../lib/googleAds');
+const { geoConstantToCode } = require('../lib/geoTargets');
 
 const router = express.Router();
+
+// ── Fetch + store Google Ads spend per market for a batch_store ────────────
+async function syncAdSpend(bsId, store, productIds, fromDate, toDate) {
+  const cfg = await getConfig();
+  // Per-store refresh token + per-store customer id are both required
+  if (!store.gads_refresh_token || !store.gads_customer_id) return { spend: 0, markets: 0 };
+  if (!cfg.gads_client_id || !cfg.gads_client_secret || !cfg.gads_developer_token) return { spend: 0, markets: 0 };
+
+  let token;
+  try {
+    token = await gads.getAccessToken(cfg.gads_client_id, cfg.gads_client_secret, store.gads_refresh_token);
+  } catch (err) {
+    await logActivity('ads', 'warning', `${store.name}: Google Ads auth failed`, { error: err.message });
+    return { spend: 0, markets: 0 };
+  }
+
+  let rows;
+  try {
+    rows = await gads.getSpendByProductAndGeo(cfg, token, store.gads_customer_id, productIds, fromDate, toDate);
+  } catch (err) {
+    await logActivity('ads', 'warning', `${store.name}: Google Ads query failed`, { error: err.message });
+    return { spend: 0, markets: 0 };
+  }
+
+  // Aggregate by date + market
+  const agg = {}; // key date|market
+  for (const r of rows) {
+    const market = geoConstantToCode(r.geoConstant) || 'ALL';
+    const key = `${r.date}|${market}`;
+    if (!agg[key]) agg[key] = { date: r.date, market, cost: 0, conversions: 0, conversion_value: 0, clicks: 0, impressions: 0 };
+    agg[key].cost += r.cost;
+    agg[key].conversions += r.conversions;
+    agg[key].conversion_value += r.conversionValue;
+    agg[key].clicks += r.clicks;
+    agg[key].impressions += r.impressions;
+  }
+
+  const upserts = Object.values(agg).map(a => ({ batch_store_id: bsId, ...a, synced_at: new Date().toISOString() }));
+  let totalSpend = 0;
+  const marketSet = new Set();
+  if (upserts.length > 0) {
+    for (const u of upserts) { totalSpend += u.cost; marketSet.add(u.market); }
+    const { error } = await supabase.from('biq_ad_spend_daily').upsert(upserts, { onConflict: 'batch_store_id,date,market' });
+    if (error) await logActivity('ads', 'warning', `${store.name}: ad spend store failed`, { error: error.message });
+  }
+  return { spend: totalSpend, markets: marketSet.size };
+}
 
 // ── Core sync for one batch_store entry ────────────────────────────────────
 async function syncBatchStore(batchStore, fromDate, toDate) {
@@ -97,9 +146,37 @@ async function syncBatchStore(batchStore, fromDate, toDate) {
     daysUpserted++; totalRevenue += perf.revenue; totalOrders += perf.orders;
   }
 
+  // 5. Per-market revenue (group orders by date + country, only batch products)
+  const marketAgg = {}; // date|country
+  for (const order of orders) {
+    const date = order.created_at.split('T')[0];
+    const market = order.country || 'ALL';
+    const perf = calcPerformance(productIds, [order]);
+    if (perf.orders === 0) continue;
+    const key = `${date}|${market}`;
+    if (!marketAgg[key]) marketAgg[key] = { date, market, revenue: 0, orders: 0, units: 0 };
+    marketAgg[key].revenue += perf.revenue;
+    marketAgg[key].orders += perf.orders;
+    marketAgg[key].units += perf.units;
+  }
+  const marketUpserts = Object.values(marketAgg).map(m => ({ batch_store_id: bsId, ...m, synced_at: new Date().toISOString() }));
+  if (marketUpserts.length > 0) {
+    const { error: mErr } = await supabase.from('biq_market_perf_daily').upsert(marketUpserts, { onConflict: 'batch_store_id,date,market' });
+    if (mErr) await logActivity('sync', 'warning', `${storeName}: market revenue store failed`, { error: mErr.message });
+  }
+
+  // 6. Google Ads spend per market (only if this store has an account + GAds is connected)
+  let adResult = { spend: 0, markets: 0 };
+  try {
+    adResult = await syncAdSpend(bsId, store, productIds, fromDate, toDate);
+  } catch (err) {
+    await logActivity('ads', 'warning', `${storeName}: ad spend sync error`, { error: err.message });
+  }
+
+  const roas = adResult.spend > 0 ? (totalRevenue / adResult.spend) : null;
   await logActivity('sync', 'success',
-    `${storeName}: ${productIds.length} products (${sc.active} active, ${sc.draft} draft, ${sc.archived} archived), ${totalOrders} orders, €${totalRevenue.toFixed(0)} (tag "${effectiveTag}")`,
-    { batch_store_id: bsId, products: productIds.length, status: sc, orders: totalOrders, revenue: totalRevenue, tag: effectiveTag });
+    `${storeName}: ${productIds.length} products (${sc.active} active, ${sc.draft} draft, ${sc.archived} archived), ${totalOrders} orders, €${totalRevenue.toFixed(0)} rev, €${adResult.spend.toFixed(0)} ads${roas !== null ? `, ROAS ${roas.toFixed(2)}` : ''} (tag "${effectiveTag}")`,
+    { batch_store_id: bsId, products: productIds.length, status: sc, orders: totalOrders, revenue: totalRevenue, spend: adResult.spend, roas, tag: effectiveTag });
 
   return { days: daysUpserted, products: productIds.length };
 }
@@ -118,7 +195,7 @@ async function syncAll(days = 1) {
     .from('biq_batch_stores')
     .select(`
       id, shopify_tag,
-      biq_stores ( id, shop_domain, name, access_token, active, client_id, client_secret ),
+      biq_stores ( id, shop_domain, name, access_token, active, client_id, client_secret, gads_customer_id, gads_refresh_token ),
       biq_batches ( status, batch_tag, name )
     `);
 
@@ -176,7 +253,7 @@ router.post('/batch/:batchId', async (req, res) => {
 
   const { data: batchStores, error } = await supabase
     .from('biq_batch_stores')
-    .select(`id, shopify_tag, biq_stores ( id, shop_domain, name, access_token, active, client_id, client_secret ), biq_batches ( status, batch_tag, name )`)
+    .select(`id, shopify_tag, biq_stores ( id, shop_domain, name, access_token, active, client_id, client_secret, gads_customer_id, gads_refresh_token ), biq_batches ( status, batch_tag, name )`)
     .eq('batch_id', req.params.batchId);
 
   if (error) return res.status(500).json({ error: error.message });
@@ -223,7 +300,7 @@ async function syncStoreNow(storeId, days = 30) {
   // Sync performance for every batch linked to this store
   const { data: batchStores } = await supabase
     .from('biq_batch_stores')
-    .select(`id, shopify_tag, biq_stores ( id, shop_domain, name, access_token, active, client_id, client_secret ), biq_batches ( status, batch_tag, name )`)
+    .select(`id, shopify_tag, biq_stores ( id, shop_domain, name, access_token, active, client_id, client_secret, gads_customer_id, gads_refresh_token ), biq_batches ( status, batch_tag, name )`)
     .eq('store_id', storeId);
 
   let totalDays = 0; const errors = [];

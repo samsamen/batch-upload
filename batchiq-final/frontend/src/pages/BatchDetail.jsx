@@ -47,6 +47,53 @@ function CopyButton({ value }) {
   );
 }
 
+function MarketDropdown({ markets, batchOverlap }) {
+  const [open, setOpen] = useState(false);
+  if (!markets || markets.length === 0) return null;
+  return (
+    <div style={{ marginTop: 12, borderTop: '1px solid var(--b1)', paddingTop: 10 }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        style={{ display: 'flex', alignItems: 'center', gap: 7, background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: 'var(--brand)', fontSize: 12, fontWeight: 700 }}>
+        <span style={{ transform: open ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s', display: 'inline-block' }}>▸</span>
+        Markets ({markets.length})
+      </button>
+      {open && (
+        <div style={{ marginTop: 10, overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+            <thead>
+              <tr style={{ borderBottom: '1px solid var(--b1)' }}>
+                {['Market', 'Revenue', 'Ad spend', 'ROAS', 'Orders', 'Units'].map(h => (
+                  <th key={h} style={{ textAlign: h === 'Market' ? 'left' : 'right', padding: '6px 10px', fontSize: 9, fontWeight: 600, color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {markets.map(m => {
+                const ov = batchOverlap.includes(m.market);
+                return (
+                  <tr key={m.market} style={{ borderBottom: '1px solid var(--b1)' }}>
+                    <td style={{ padding: '7px 10px' }}>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontFamily: "'Fira Code', monospace", fontWeight: 700, color: ov ? 'var(--gold)' : 'var(--t1)' }}>
+                        {ov && <WarnTriangle size={11} />}{m.market}
+                      </span>
+                    </td>
+                    <td style={{ padding: '7px 10px', textAlign: 'right', fontFamily: "'Fira Code', monospace", color: m.revenue > 0 ? 'var(--brand)' : 'var(--t3)' }}>{fmtCurrency(m.revenue)}</td>
+                    <td style={{ padding: '7px 10px', textAlign: 'right', fontFamily: "'Fira Code', monospace", color: 'var(--t2)' }}>{fmtCurrency(m.spend)}</td>
+                    <td style={{ padding: '7px 10px', textAlign: 'right', fontFamily: "'Fira Code', monospace", fontWeight: 700, color: m.roas >= 1 ? 'var(--green)' : (m.roas !== null ? 'var(--amber)' : 'var(--t3)') }}>{m.roas !== null ? m.roas.toFixed(2) : '—'}</td>
+                    <td style={{ padding: '7px 10px', textAlign: 'right', fontFamily: "'Fira Code', monospace", color: 'var(--t2)' }}>{m.orders}</td>
+                    <td style={{ padding: '7px 10px', textAlign: 'right', fontFamily: "'Fira Code', monospace", color: 'var(--t2)' }}>{m.units}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function WarnTriangle({ size = 14 }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0 }}>
@@ -312,12 +359,16 @@ export default function BatchDetail() {
     .sort((a, b) => a.date.localeCompare(b.date))
     .map(d => ({ ...d, date: d.date.slice(5) }));
 
-  // Store rows
+  // Store rows — prefer backend rollup (has spend/roas/markets), fall back to local calc
   const storeRows = (batch.biq_batch_stores || []).map(bs => {
-    const rev = (bs.biq_performance_daily || []).reduce((s, p) => s + parseFloat(p.revenue || 0), 0);
-    const ord = (bs.biq_performance_daily || []).reduce((s, p) => s + (p.orders || 0), 0);
-    const unt = (bs.biq_performance_daily || []).reduce((s, p) => s + (p.units_sold || 0), 0);
-    return { ...bs, totals: { revenue: rev, orders: ord, units: unt } };
+    const r = bs.rollup || {};
+    const rev = r.revenue ?? (bs.biq_performance_daily || []).reduce((s, p) => s + parseFloat(p.revenue || 0), 0);
+    const ord = r.orders ?? (bs.biq_performance_daily || []).reduce((s, p) => s + (p.orders || 0), 0);
+    const unt = r.units ?? (bs.biq_performance_daily || []).reduce((s, p) => s + (p.units_sold || 0), 0);
+    const spend = r.spend ?? 0;
+    const roas = r.roas ?? (spend > 0 ? rev / spend : null);
+    const markets = r.markets || [];
+    return { ...bs, totals: { revenue: rev, orders: ord, units: unt, spend, roas }, marketRows: markets };
   }).sort((a, b) => b.totals.revenue - a.totals.revenue);
 
   const grand = storeRows.reduce(
@@ -325,13 +376,15 @@ export default function BatchDetail() {
       revenue: acc.revenue + r.totals.revenue,
       orders: acc.orders + r.totals.orders,
       units: acc.units + r.totals.units,
+      spend: acc.spend + (r.totals.spend || 0),
       active: acc.active + (r.product_count_active || 0),
       draft: acc.draft + (r.product_count_draft || 0),
       archived: acc.archived + (r.product_count_archived || 0),
       totalProducts: acc.totalProducts + (r.product_count || 0),
     }),
-    { revenue: 0, orders: 0, units: 0, active: 0, draft: 0, archived: 0, totalProducts: 0 }
+    { revenue: 0, orders: 0, units: 0, spend: 0, active: 0, draft: 0, archived: 0, totalProducts: 0 }
   );
+  grand.roas = grand.spend > 0 ? grand.revenue / grand.spend : null;
 
   // Detect markets shared by 2+ stores within THIS batch (cannibalization risk)
   const batchMarketCount = {};
@@ -438,6 +491,9 @@ export default function BatchDetail() {
             <Label style={{ marginBottom: 16 }}>All-time totals</Label>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
               <BigStat label="Revenue" value={fmtCurrency(grand.revenue)} gold={grand.revenue > 0} />
+              <div style={{ height: 1, background: 'var(--b1)' }} />
+              <BigStat label="Ad spend" value={fmtCurrency(grand.spend)} />
+              <BigStat label="ROAS" value={grand.roas !== null ? grand.roas.toFixed(2) : '—'} gold={grand.roas !== null && grand.roas >= 1} />
               <div style={{ height: 1, background: 'var(--b1)' }} />
               <BigStat label="Orders"  value={grand.orders} />
               <BigStat label="Units"   value={grand.units} />
@@ -562,10 +618,15 @@ export default function BatchDetail() {
                       {/* Right: stats */}
                       <div style={{ display: 'flex', gap: 22, textAlign: 'right', flexShrink: 0 }}>
                         <Stat label="Revenue" value={fmtCurrency(bs.totals.revenue)} accent={bs.totals.revenue > 0} />
+                        <Stat label="Ad spend" value={fmtCurrency(bs.totals.spend || 0)} />
+                        <Stat label="ROAS" value={bs.totals.roas !== null && bs.totals.roas !== undefined ? bs.totals.roas.toFixed(2) : '—'} accent={bs.totals.roas >= 1} />
                         <Stat label="Orders" value={bs.totals.orders} />
                         <Stat label="Units" value={bs.totals.units} />
                       </div>
                     </div>
+
+                    {/* Per-market dropdown */}
+                    <MarketDropdown markets={bs.marketRows || []} batchOverlap={batchOverlap} />
 
                     {/* Actions */}
                     <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 14 }}>

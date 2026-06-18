@@ -12,6 +12,7 @@ const syncRoutes    = require('./src/routes/sync');
 const configRoutes  = require('./src/routes/config');
 const researchRoutes = require('./src/routes/research');
 const activityRoutes = require('./src/routes/activity');
+const googleAdsRoutes = require('./src/routes/googleAds');
 const { syncAll }   = require('./src/routes/sync');
 
 const app  = express();
@@ -32,6 +33,7 @@ app.use('/api/sync',     syncRoutes);
 app.use('/api/config',   configRoutes);
 app.use('/api/research', researchRoutes);
 app.use('/api/activity', activityRoutes);
+app.use('/api/google-ads', googleAdsRoutes);
 
 // Serve frontend — built into backend/public during Railway build
 const frontendDist = path.join(__dirname, 'public');
