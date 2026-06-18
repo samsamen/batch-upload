@@ -131,6 +131,17 @@ async function syncAdSpend(bsId, store, productIds, fromDate, toDate, marketRevB
   const upserts = Object.values(agg).map(a => ({ batch_store_id: bsId, ...a, synced_at: new Date().toISOString() }));
   let totalSpend = 0;
   const marketSet = new Set();
+
+  // Clear existing ad-spend rows for this batch_store in the synced date range first,
+  // so stale rows (e.g. an old "ALL" bucket from a previous sync) don't linger and
+  // get double-counted alongside the new per-country rows.
+  await supabase.from('biq_ad_spend_daily')
+    .delete()
+    .eq('batch_store_id', bsId)
+    .gte('date', fromDate)
+    .lte('date', toDate)
+    .then(() => {}, () => {});
+
   if (upserts.length > 0) {
     for (const u of upserts) { totalSpend += u.cost; marketSet.add(u.market); }
     const { error } = await supabase.from('biq_ad_spend_daily').upsert(upserts, { onConflict: 'batch_store_id,date,market' });
@@ -254,6 +265,13 @@ async function syncBatchStore(batchStore, fromDate, toDate) {
     marketAgg[key].units += perf.units;
   }
   const marketUpserts = Object.values(marketAgg).map(m => ({ batch_store_id: bsId, ...m, synced_at: new Date().toISOString() }));
+  // Clear stale market-revenue rows in range first (avoids orphaned buckets)
+  await supabase.from('biq_market_perf_daily')
+    .delete()
+    .eq('batch_store_id', bsId)
+    .gte('date', fromDate)
+    .lte('date', toDate)
+    .then(() => {}, () => {});
   if (marketUpserts.length > 0) {
     const { error: mErr } = await supabase.from('biq_market_perf_daily').upsert(marketUpserts, { onConflict: 'batch_store_id,date,market' });
     if (mErr) await logActivity('sync', 'warning', `${storeName}: market revenue store failed`, { error: mErr.message });

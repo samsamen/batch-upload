@@ -23,7 +23,7 @@ app.use(cors({ origin: (origin, cb) => cb(null, true), credentials: true }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-const BUILD_VERSION = 'v3.7-geo-spend-revenue-fallback';
+const BUILD_VERSION = 'v3.8-clear-stale-spend-rows';
 const BUILD_TIME = new Date().toISOString();
 
 app.get('/health', (req, res) => {
