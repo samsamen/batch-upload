@@ -18,8 +18,8 @@ router.get('/', async (req, res) => {
   res.json(data);
 });
 
-// POST /api/stores/connect — add a store using client credentials (no login)
-// Body: { shop_domain, name?, feed_language?, client_id?, client_secret? }
+// POST /api/stores/connect — add a store using ITS OWN client credentials.
+// Body: { shop_domain, client_id, client_secret, name?, feed_language? }
 router.post('/connect', async (req, res) => {
   let { shop_domain, name, feed_language, client_id, client_secret } = req.body;
 
@@ -30,20 +30,11 @@ router.post('/connect', async (req, res) => {
     return res.status(400).json({ error: 'Store URL must end in .myshopify.com' });
   }
 
-  const cfg = await getConfig();
-  const useClientId = client_id || cfg.shopify_client_id;
-  const useSecret = client_secret || cfg.shopify_client_secret;
-
+  // Each store has its OWN custom app keys — required for every store.
+  const useClientId = (client_id || '').trim();
+  const useSecret = (client_secret || '').trim();
   if (!useClientId || !useSecret) {
-    return res.status(400).json({ error: 'No Shopify credentials. Enter Client ID and Secret.' });
-  }
-
-  if (client_id || client_secret) {
-    await supabase.from('biq_config').update({
-      shopify_client_id: useClientId,
-      shopify_client_secret: useSecret,
-      updated_at: new Date().toISOString(),
-    }).eq('id', 1);
+    return res.status(400).json({ error: 'Enter this store\u2019s own Client ID and Secret (each store has its own app).' });
   }
 
   let accessToken;
@@ -71,10 +62,11 @@ router.post('/connect', async (req, res) => {
   let { markets } = await getMarkets(shop_domain, accessToken);
   if (markets.length === 0 && country) markets = [country];
 
-  // Save store
+  // Save store WITH its own keys
   const { data, error } = await supabase.from('biq_stores').upsert(
     {
       shop_domain, name: storeName, access_token: accessToken,
+      client_id: useClientId, client_secret: useSecret,
       country, currency, feed_language: feed_language || null,
       markets,
       active: true, connected_at: new Date().toISOString(),
@@ -102,15 +94,9 @@ router.patch('/:id', async (req, res) => {
   if (currency !== undefined) update.currency = currency;
   if (markets !== undefined) update.markets = markets;
 
-  // Update global app credentials if provided
-  if (client_id || client_secret) {
-    const cfg = await getConfig();
-    await supabase.from('biq_config').update({
-      shopify_client_id: client_id || cfg.shopify_client_id,
-      shopify_client_secret: client_secret || cfg.shopify_client_secret,
-      updated_at: new Date().toISOString(),
-    }).eq('id', 1);
-  }
+  // Save app credentials ON THIS STORE (each store has its own app)
+  if (client_id) update.client_id = client_id.trim();
+  if (client_secret) update.client_secret = client_secret.trim();
 
   // Allow correcting the Shopify store URL
   if (shop_domain !== undefined && shop_domain.trim()) {
@@ -120,14 +106,14 @@ router.patch('/:id', async (req, res) => {
     }
     update.shop_domain = shop_domain;
 
-    // Re-verify with a fresh token so the corrected domain actually works
-    const cfg = await getConfig();
-    const cid = client_id || cfg.shopify_client_id;
-    const csec = client_secret || cfg.shopify_client_secret;
+    // Re-verify with a fresh token using THIS store's keys
+    const { data: existing } = await supabase.from('biq_stores')
+      .select('client_id, client_secret').eq('id', req.params.id).single();
+    const cid = (client_id || existing?.client_id || '').trim();
+    const csec = (client_secret || existing?.client_secret || '').trim();
     if (cid && csec) {
       try {
-        const newToken = await getAccessToken(shop_domain, cid, csec);
-        update.access_token = newToken;
+        update.access_token = await getAccessToken(shop_domain, cid, csec);
       } catch (err) {
         return res.status(400).json({ error: `New URL could not be verified: ${err.message}` });
       }
@@ -147,13 +133,12 @@ router.patch('/:id', async (req, res) => {
 // POST /api/stores/:id/refresh-markets — pull markets fresh from Shopify
 router.post('/:id/refresh-markets', async (req, res) => {
   const { data: store, error } = await supabase
-    .from('biq_stores').select('id, shop_domain, access_token').eq('id', req.params.id).single();
+    .from('biq_stores').select('id, shop_domain, access_token, client_id, client_secret').eq('id', req.params.id).single();
   if (error || !store) return res.status(404).json({ error: 'Store not found' });
 
   let token = store.access_token;
-  const cfg = await getConfig();
-  if (cfg.shopify_client_id && cfg.shopify_client_secret) {
-    try { token = await getAccessToken(store.shop_domain, cfg.shopify_client_id, cfg.shopify_client_secret); } catch (e) {
+  if (store.client_id && store.client_secret) {
+    try { token = await getAccessToken(store.shop_domain, store.client_id, store.client_secret); } catch (e) {
       return res.status(400).json({ error: `Token refresh failed: ${e.message}` });
     }
   }
@@ -168,17 +153,16 @@ router.post('/:id/refresh-markets', async (req, res) => {
 // POST /api/stores/:id/reconnect — re-fetch a fresh token (e.g. after scope change)
 router.post('/:id/reconnect', async (req, res) => {
   const { data: store, error } = await supabase
-    .from('biq_stores').select('id, shop_domain, name').eq('id', req.params.id).single();
+    .from('biq_stores').select('id, shop_domain, name, client_id, client_secret').eq('id', req.params.id).single();
   if (error || !store) return res.status(404).json({ error: 'Store not found' });
 
-  const cfg = await getConfig();
-  if (!cfg.shopify_client_id || !cfg.shopify_client_secret) {
-    return res.status(400).json({ error: 'No app credentials saved. Add Client ID + Secret first.' });
+  if (!store.client_id || !store.client_secret) {
+    return res.status(400).json({ error: 'This store has no Client ID/Secret saved. Open Edit and add this store\u2019s own app keys.' });
   }
 
   let accessToken;
   try {
-    accessToken = await getAccessToken(store.shop_domain, cfg.shopify_client_id, cfg.shopify_client_secret);
+    accessToken = await getAccessToken(store.shop_domain, store.client_id, store.client_secret);
   } catch (err) {
     return res.status(400).json({ error: `Reconnect failed: ${err.message}` });
   }

@@ -55,3 +55,7 @@ CREATE INDEX IF NOT EXISTS idx_activity_created ON biq_activity (created_at DESC
 
 -- Product count cache on batch-store links
 ALTER TABLE biq_batch_stores ADD COLUMN IF NOT EXISTS product_count INTEGER DEFAULT 0;
+
+-- Per-store Shopify app credentials (each store has its own custom app)
+ALTER TABLE biq_stores ADD COLUMN IF NOT EXISTS client_id TEXT;
+ALTER TABLE biq_stores ADD COLUMN IF NOT EXISTS client_secret TEXT;

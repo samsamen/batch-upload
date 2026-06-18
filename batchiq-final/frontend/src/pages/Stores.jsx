@@ -60,27 +60,27 @@ function CopyButton({ value, label = 'Copy' }) {
 function ConnectModal({ onClose, onConnected, savedConfig }) {
   const [form, setForm] = useState({
     shop_domain: '',
-    client_id: savedConfig.shopify_client_id || '',
+    client_id: '',
     client_secret: '',
     name: '',
     feed_language: '',
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const hasSecret = savedConfig.has_secret;
 
   const set = (k) => (e) => setForm(f => ({ ...f, [k]: e.target.value }));
 
   async function submit() {
     if (!form.shop_domain.trim()) { setError('Enter the store URL.'); return; }
+    if (!form.client_id.trim() || !form.client_secret.trim()) { setError('Enter this store\u2019s own Client ID and Secret.'); return; }
     setLoading(true); setError(null);
     try {
       const store = await api.post('/api/stores/connect', {
         shop_domain: form.shop_domain.trim(),
         name: form.name.trim() || undefined,
         feed_language: form.feed_language || undefined,
-        client_id: form.client_id.trim() || undefined,
-        client_secret: form.client_secret.trim() || undefined,
+        client_id: form.client_id.trim(),
+        client_secret: form.client_secret.trim(),
       });
       onConnected(store);
       onClose();
@@ -158,16 +158,11 @@ function ConnectModal({ onClose, onConnected, savedConfig }) {
               <Label>Client Secret</Label>
               <input
                 type="password"
-                placeholder={hasSecret ? 'saved — leave empty to reuse' : 'paste Client Secret'}
+                placeholder="paste this store's Client Secret"
                 value={form.client_secret}
                 onChange={set('client_secret')}
                 style={{ fontFamily: "'Fira Code', monospace", fontSize: 12 }}
               />
-              {hasSecret && (
-                <div style={{ fontSize: 10, color: 'var(--green)', marginTop: 5 }}>
-                  ✓ App credentials saved — you only need the store URL for new stores.
-                </div>
-              )}
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 18 }}>
@@ -207,11 +202,11 @@ function ConnectModal({ onClose, onConnected, savedConfig }) {
                 One-time setup per store
               </div>
               <ol style={{ margin: 0, paddingLeft: 16, display: 'flex', flexDirection: 'column', gap: 9 }}>
-                <Step>Go to the <strong style={{ color: 'var(--gold)' }}>Shopify Dev Dashboard</strong> and create an app (once — same app works for all stores)</Step>
-                <Step>Enable the required scopes below in the app configuration</Step>
-                <Step><strong style={{ color: 'var(--t1)' }}>Install the app on the store</strong> (Dev Dashboard → your app → choose store) — one-time per store</Step>
-                <Step>Copy Client ID + Secret here, click <strong style={{ color: 'var(--t1)' }}>Add store</strong></Step>
-                <Step>Every next store: install app on it + only enter store URL here</Step>
+                <Step>In the store admin: <strong style={{ color: 'var(--gold)' }}>Settings → Apps and sales channels → Develop apps</strong> → Create an app</Step>
+                <Step>Open <strong style={{ color: 'var(--t1)' }}>Configuration</strong> → enable all the scopes listed below (including <strong style={{ color: 'var(--t1)' }}>read_markets</strong>)</Step>
+                <Step><strong style={{ color: 'var(--t1)' }}>Install app</strong> on the store (top right). If you change scopes later, you must Install/Update again or the token won't have them.</Step>
+                <Step>Open <strong style={{ color: 'var(--t1)' }}>API credentials</strong> → copy this store's Client ID + Client Secret here</Step>
+                <Step>Each store has its OWN app and its OWN keys — repeat per store.</Step>
               </ol>
             </div>
 

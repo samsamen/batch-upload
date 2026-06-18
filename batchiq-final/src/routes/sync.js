@@ -25,11 +25,10 @@ async function syncBatchStore(batchStore, fromDate, toDate) {
     return { days: 0, products: 0 };
   }
 
-  // Refresh access token (client credentials tokens expire after 24h)
+  // Refresh access token using THIS store's own app keys (client credentials expire after 24h)
   try {
-    const cfg = await getConfig();
-    if (cfg.shopify_client_id && cfg.shopify_client_secret) {
-      store.access_token = await getAccessToken(store.shop_domain, cfg.shopify_client_id, cfg.shopify_client_secret);
+    if (store.client_id && store.client_secret) {
+      store.access_token = await getAccessToken(store.shop_domain, store.client_id, store.client_secret);
     }
   } catch (err) {
     await logActivity('error', 'error', `${storeName}: token refresh failed`, { error: err.message });
@@ -113,7 +112,7 @@ async function syncAll(days = 1) {
     .from('biq_batch_stores')
     .select(`
       id, shopify_tag,
-      biq_stores ( id, shop_domain, name, access_token, active ),
+      biq_stores ( id, shop_domain, name, access_token, active, client_id, client_secret ),
       biq_batches ( status, batch_tag, name )
     `);
 
@@ -171,7 +170,7 @@ router.post('/batch/:batchId', async (req, res) => {
 
   const { data: batchStores, error } = await supabase
     .from('biq_batch_stores')
-    .select(`id, shopify_tag, biq_stores ( id, shop_domain, name, access_token, active ), biq_batches ( status, batch_tag, name )`)
+    .select(`id, shopify_tag, biq_stores ( id, shop_domain, name, access_token, active, client_id, client_secret ), biq_batches ( status, batch_tag, name )`)
     .eq('batch_id', req.params.batchId);
 
   if (error) return res.status(500).json({ error: error.message });
@@ -195,12 +194,11 @@ async function syncStoreNow(storeId, days = 30) {
   // Always refresh markets for the store, even if it has no batches yet
   try {
     const { data: store } = await supabase
-      .from('biq_stores').select('id, shop_domain, name, access_token').eq('id', storeId).single();
+      .from('biq_stores').select('id, shop_domain, name, access_token, client_id, client_secret').eq('id', storeId).single();
     if (store) {
       let token = store.access_token;
-      const cfg = await getConfig();
-      if (cfg.shopify_client_id && cfg.shopify_client_secret) {
-        try { token = await getAccessToken(store.shop_domain, cfg.shopify_client_id, cfg.shopify_client_secret); } catch {}
+      if (store.client_id && store.client_secret) {
+        try { token = await getAccessToken(store.shop_domain, store.client_id, store.client_secret); } catch {}
       }
       const { markets, error: mErr } = await getMarkets(store.shop_domain, token);
       if (markets.length > 0) {
@@ -219,7 +217,7 @@ async function syncStoreNow(storeId, days = 30) {
   // Sync performance for every batch linked to this store
   const { data: batchStores } = await supabase
     .from('biq_batch_stores')
-    .select(`id, shopify_tag, biq_stores ( id, shop_domain, name, access_token, active ), biq_batches ( status, batch_tag, name )`)
+    .select(`id, shopify_tag, biq_stores ( id, shop_domain, name, access_token, active, client_id, client_secret ), biq_batches ( status, batch_tag, name )`)
     .eq('store_id', storeId);
 
   let totalDays = 0; const errors = [];
