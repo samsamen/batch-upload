@@ -54,8 +54,14 @@ async function syncBatchStore(batchStore, fromDate, toDate) {
     throw new Error(`Failed to get products from ${store.shop_domain}: ${err.message}`);
   }
 
-  // Cache the product count on the batch_store
-  await supabase.from('biq_batch_stores').update({ product_count: productIds.length }).eq('id', bsId);
+  // Cache the product count + per-status counts on the batch_store
+  const sc = productIds.statusCounts || { active: 0, draft: 0, archived: 0 };
+  await supabase.from('biq_batch_stores').update({
+    product_count: productIds.length,
+    product_count_active: sc.active,
+    product_count_draft: sc.draft,
+    product_count_archived: sc.archived,
+  }).eq('id', bsId);
 
   if (productIds.length === 0) {
     await logActivity('sync', 'warning', `${storeName}: 0 products found with tag "${effectiveTag}"`, { batch_store_id: bsId, tag: effectiveTag });
@@ -92,8 +98,8 @@ async function syncBatchStore(batchStore, fromDate, toDate) {
   }
 
   await logActivity('sync', 'success',
-    `${storeName}: synced ${productIds.length} products, ${totalOrders} orders, €${totalRevenue.toFixed(0)} (tag "${effectiveTag}")`,
-    { batch_store_id: bsId, products: productIds.length, orders: totalOrders, revenue: totalRevenue, tag: effectiveTag });
+    `${storeName}: ${productIds.length} products (${sc.active} active, ${sc.draft} draft, ${sc.archived} archived), ${totalOrders} orders, €${totalRevenue.toFixed(0)} (tag "${effectiveTag}")`,
+    { batch_store_id: bsId, products: productIds.length, status: sc, orders: totalOrders, revenue: totalRevenue, tag: effectiveTag });
 
   return { days: daysUpserted, products: productIds.length };
 }

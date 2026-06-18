@@ -59,3 +59,8 @@ ALTER TABLE biq_batch_stores ADD COLUMN IF NOT EXISTS product_count INTEGER DEFA
 -- Per-store Shopify app credentials (each store has its own custom app)
 ALTER TABLE biq_stores ADD COLUMN IF NOT EXISTS client_id TEXT;
 ALTER TABLE biq_stores ADD COLUMN IF NOT EXISTS client_secret TEXT;
+
+-- Per-store product status counts within a batch
+ALTER TABLE biq_batch_stores ADD COLUMN IF NOT EXISTS product_count_active INTEGER DEFAULT 0;
+ALTER TABLE biq_batch_stores ADD COLUMN IF NOT EXISTS product_count_draft INTEGER DEFAULT 0;
+ALTER TABLE biq_batch_stores ADD COLUMN IF NOT EXISTS product_count_archived INTEGER DEFAULT 0;

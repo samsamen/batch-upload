@@ -46,8 +46,8 @@ router.get('/', async (req, res) => {
     .select(`
       id, batch_code, batch_tag, name, source, thesis, validation_notes, tags, sub_tags, changes, changes_note, status, created_at,
       biq_batch_stores (
-        id, shopify_tag, product_count, notes,
-        biq_stores ( id, name, shop_domain, country, currency ),
+        id, shopify_tag, product_count, product_count_active, product_count_draft, product_count_archived, notes,
+        biq_stores ( id, name, shop_domain, country, currency, markets ),
         biq_performance_daily ( date, orders, revenue, units_sold, ad_spend )
       )
     `)
@@ -87,8 +87,8 @@ router.get('/:id', async (req, res) => {
     .select(`
       id, batch_code, batch_tag, name, source, thesis, validation_notes, tags, sub_tags, changes, changes_note, status, created_at,
       biq_batch_stores (
-        id, shopify_tag, product_count, notes, added_at,
-        biq_stores ( id, name, shop_domain, country, currency ),
+        id, shopify_tag, product_count, product_count_active, product_count_draft, product_count_archived, notes, added_at,
+        biq_stores ( id, name, shop_domain, country, currency, markets ),
         biq_performance_daily ( date, orders, revenue, units_sold, ad_spend, clicks, impressions )
       )
     `)

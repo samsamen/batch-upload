@@ -47,6 +47,38 @@ function CopyButton({ value }) {
   );
 }
 
+function WarnTriangle({ size = 14 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0 }}>
+      <path d="M12 3L2 20h20L12 3z" fill="rgba(232,184,75,0.18)" stroke="var(--gold)" strokeWidth="1.8" strokeLinejoin="round" />
+      <path d="M12 9v5" stroke="var(--gold)" strokeWidth="1.8" strokeLinecap="round" />
+      <circle cx="12" cy="17" r="0.6" fill="var(--gold)" stroke="var(--gold)" strokeWidth="0.8" />
+    </svg>
+  );
+}
+
+function StatusPill({ label, count, color, bg }) {
+  return (
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', gap: 4,
+      fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 6,
+      background: bg, color: color,
+    }}>
+      <span style={{ fontFamily: "'Fira Code', monospace" }}>{count}</span>
+      <span style={{ textTransform: 'uppercase', letterSpacing: '0.04em', opacity: 0.85 }}>{label}</span>
+    </span>
+  );
+}
+
+function Stat({ label, value, accent }) {
+  return (
+    <div>
+      <div style={{ fontSize: 9, fontWeight: 600, color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 3 }}>{label}</div>
+      <div style={{ fontFamily: "'Fira Code', monospace", fontSize: 14, fontWeight: 600, color: accent ? 'var(--brand)' : 'var(--t1)' }}>{value}</div>
+    </div>
+  );
+}
+
 function Label({ children, style }) {
   return (
     <div style={{
@@ -289,9 +321,26 @@ export default function BatchDetail() {
   }).sort((a, b) => b.totals.revenue - a.totals.revenue);
 
   const grand = storeRows.reduce(
-    (acc, r) => ({ revenue: acc.revenue + r.totals.revenue, orders: acc.orders + r.totals.orders, units: acc.units + r.totals.units }),
-    { revenue: 0, orders: 0, units: 0 }
+    (acc, r) => ({
+      revenue: acc.revenue + r.totals.revenue,
+      orders: acc.orders + r.totals.orders,
+      units: acc.units + r.totals.units,
+      active: acc.active + (r.product_count_active || 0),
+      draft: acc.draft + (r.product_count_draft || 0),
+      archived: acc.archived + (r.product_count_archived || 0),
+      totalProducts: acc.totalProducts + (r.product_count || 0),
+    }),
+    { revenue: 0, orders: 0, units: 0, active: 0, draft: 0, archived: 0, totalProducts: 0 }
   );
+
+  // Detect markets shared by 2+ stores within THIS batch (cannibalization risk)
+  const batchMarketCount = {};
+  for (const r of storeRows) {
+    for (const m of (r.biq_stores?.markets || [])) {
+      batchMarketCount[m] = (batchMarketCount[m] || 0) + 1;
+    }
+  }
+  const batchOverlap = Object.entries(batchMarketCount).filter(([, n]) => n > 1).map(([m]) => m);
 
   return (
     <div>
@@ -324,8 +373,9 @@ export default function BatchDetail() {
               Created {fmtDate(batch.created_at)}
             </span>
           </div>
-          <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--t1)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 18, fontWeight: 700, color: 'var(--t1)' }}>
             {batch.name}
+            <CopyButton value={batch.name} />
           </div>
         </div>
 
@@ -391,6 +441,11 @@ export default function BatchDetail() {
               <div style={{ height: 1, background: 'var(--b1)' }} />
               <BigStat label="Orders"  value={grand.orders} />
               <BigStat label="Units"   value={grand.units} />
+              <div style={{ height: 1, background: 'var(--b1)' }} />
+              <BigStat label="Active products" value={grand.active} />
+              <div style={{ fontSize: 10, color: 'var(--t3)', marginTop: -8 }}>
+                {grand.totalProducts} total · {grand.draft} draft · {grand.archived} archived
+              </div>
             </div>
           </div>
         </div>
@@ -437,93 +492,102 @@ export default function BatchDetail() {
               No stores added. Click "Add Store" to link a Shopify store to this batch.
             </div>
           ) : (
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead>
-                <tr style={{ borderBottom: '1px solid var(--b1)' }}>
-                  {['Store', 'Sub-tag', 'Revenue', 'Orders', 'Units', ''].map(h => (
-                    <th key={h} style={{
-                      padding: '8px 20px', textAlign: 'left',
-                      fontSize: 9, fontWeight: 600, color: 'var(--t3)',
-                      textTransform: 'uppercase', letterSpacing: '0.09em',
-                      whiteSpace: 'nowrap',
-                    }}>
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {storeRows.map((bs, i) => (
-                  <tr
-                    key={bs.id}
-                    style={{ borderBottom: i < storeRows.length - 1 ? '1px solid var(--b1)' : 'none' }}
-                    onMouseEnter={e => e.currentTarget.style.background = 'var(--s2)'}
-                    onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
-                  >
-                    <td style={{ padding: '12px 20px', fontWeight: 600, color: 'var(--t1)', fontSize: 13 }}>
-                      {bs.biq_stores?.name || '—'}
-                      {bs.notes && (
-                        <div style={{ fontSize: 10, color: 'var(--t2)', fontWeight: 400, marginTop: 2 }}>
-                          {bs.notes}
-                        </div>
-                      )}
-                    </td>
-                    <td style={{ padding: '12px 20px' }}>
-                      {bs.shopify_tag ? (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-                          <TagChip tag={bs.shopify_tag} />
-                          <CopyButton value={bs.shopify_tag} />
-                        </div>
-                      ) : <span style={{ fontSize: 11, color: 'var(--t3)' }}>—</span>}
-                    </td>
-                    <td style={{ padding: '12px 20px', fontFamily: "'Fira Code', monospace", fontSize: 13, fontWeight: 500, color: bs.totals.revenue > 0 ? 'var(--brand)' : 'var(--t3)' }}>
-                      {fmtCurrency(bs.totals.revenue)}
-                    </td>
-                    <td style={{ padding: '12px 20px', fontFamily: "'Fira Code', monospace", fontSize: 12, color: 'var(--t2)' }}>
-                      {bs.totals.orders}
-                    </td>
-                    <td style={{ padding: '12px 20px', fontFamily: "'Fira Code', monospace", fontSize: 12, color: 'var(--t2)' }}>
-                      {bs.totals.units}
-                    </td>
-                    <td style={{ padding: '12px 20px', textAlign: 'right' }}>
-                      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-                        <button
-                          onClick={() => syncStore(bs.biq_stores?.id)}
-                          disabled={syncing === bs.biq_stores?.id}
-                          style={{
-                            fontSize: 12, fontWeight: 700, color: '#fff',
-                            background: 'linear-gradient(135deg, #818CF8, #6366F1)',
-                            border: 'none', borderRadius: 8, padding: '7px 14px',
-                            cursor: 'pointer', boxShadow: 'var(--sh-brand)',
-                            opacity: syncing === bs.biq_stores?.id ? 0.7 : 1, transition: 'transform 0.1s',
-                            display: 'inline-flex', alignItems: 'center', gap: 6,
-                          }}
-                          onMouseEnter={e => { if (syncing !== bs.biq_stores?.id) e.currentTarget.style.transform = 'translateY(-1px)'; }}
-                          onMouseLeave={e => e.currentTarget.style.transform = 'translateY(0)'}
-                        >
-                          {syncing === bs.biq_stores?.id && (
-                            <span style={{ width: 12, height: 12, borderRadius: '50%', border: '2px solid #fff', borderTopColor: 'transparent', animation: 'spin 0.6s linear infinite', display: 'inline-block' }} />
+            <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {batchOverlap.length > 0 && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '10px 14px', borderRadius: 10, background: 'rgba(232,184,75,0.1)', border: '1px solid rgba(232,184,75,0.35)' }}>
+                  <WarnTriangle />
+                  <span style={{ fontSize: 12, color: 'var(--gold)', fontWeight: 600 }}>
+                    Overlapping markets in this batch: {batchOverlap.join(', ')} — multiple stores target the same country.
+                  </span>
+                </div>
+              )}
+              {storeRows.map((bs) => {
+                const markets = bs.biq_stores?.markets || [];
+                const hasOverlap = markets.some(m => batchOverlap.includes(m));
+                return (
+                  <div key={bs.id} style={{
+                    background: 'var(--s1)',
+                    border: '1px solid ' + (hasOverlap ? 'rgba(232,184,75,0.4)' : 'var(--brand-l)'),
+                    borderRadius: 14, padding: '16px 18px',
+                    boxShadow: hasOverlap ? '0 0 0 1px rgba(232,184,75,0.15), 0 4px 18px -6px rgba(232,184,75,0.25)' : '0 0 0 1px rgba(99,102,241,0.08), 0 4px 20px -8px rgba(99,102,241,0.35)',
+                    transition: 'transform 0.12s, box-shadow 0.12s',
+                  }}
+                  onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = hasOverlap ? '0 0 0 1px rgba(232,184,75,0.25), 0 8px 26px -6px rgba(232,184,75,0.4)' : '0 0 0 1px rgba(99,102,241,0.15), 0 8px 30px -8px rgba(99,102,241,0.55)'; }}
+                  onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = hasOverlap ? '0 0 0 1px rgba(232,184,75,0.15), 0 4px 18px -6px rgba(232,184,75,0.25)' : '0 0 0 1px rgba(99,102,241,0.08), 0 4px 20px -8px rgba(99,102,241,0.35)'; }}>
+
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 14 }}>
+                      {/* Left: identity + markets */}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 9, flexWrap: 'wrap' }}>
+                          <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--t1)' }}>{bs.biq_stores?.name || '—'}</span>
+                          {hasOverlap && <WarnTriangle />}
+                          {bs.shopify_tag && (
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                              <TagChip tag={bs.shopify_tag} />
+                              <CopyButton value={bs.shopify_tag} />
+                            </span>
                           )}
-                          {syncing === bs.biq_stores?.id ? 'Syncing…' : 'Sync now'}
-                        </button>
-                        <button
-                          onClick={() => removeStore(bs.id)}
-                          style={{
-                            fontSize: 12, fontWeight: 600, color: 'var(--t1)',
-                            background: 'var(--s1)', border: '1px solid var(--b2)',
-                            borderRadius: 8, padding: '7px 14px', cursor: 'pointer', transition: 'all 0.12s',
-                          }}
-                          onMouseEnter={e => { e.currentTarget.style.color = 'var(--red)'; e.currentTarget.style.borderColor = 'var(--red)'; e.currentTarget.style.background = 'var(--red-bg)'; }}
-                          onMouseLeave={e => { e.currentTarget.style.color = 'var(--t1)'; e.currentTarget.style.borderColor = 'var(--b2)'; e.currentTarget.style.background = 'var(--s1)'; }}
-                        >
-                          Remove
-                        </button>
+                        </div>
+                        {bs.notes && <div style={{ fontSize: 11, color: 'var(--t2)', marginTop: 4 }}>{bs.notes}</div>}
+
+                        {/* Product status breakdown */}
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10, alignItems: 'center' }}>
+                          <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--t2)' }}>{bs.product_count || 0} products:</span>
+                          <StatusPill label="active" count={bs.product_count_active || 0} color="var(--green)" bg="var(--green-bg)" />
+                          <StatusPill label="draft" count={bs.product_count_draft || 0} color="var(--amber)" bg="var(--amber-bg)" />
+                          <StatusPill label="archived" count={bs.product_count_archived || 0} color="var(--t3)" bg="var(--s3)" />
+                        </div>
+
+                        {/* Markets underneath */}
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 10 }}>
+                          {markets.length > 0 ? markets.map(m => {
+                            const ov = batchOverlap.includes(m);
+                            return (
+                              <span key={m} style={{
+                                display: 'inline-flex', alignItems: 'center', gap: 4,
+                                fontFamily: "'Fira Code', monospace", fontSize: 10.5, fontWeight: 600,
+                                padding: '2px 8px', borderRadius: 6,
+                                background: ov ? 'rgba(232,184,75,0.15)' : 'var(--brand-l)',
+                                color: ov ? 'var(--gold)' : 'var(--brand)',
+                                border: '1px solid ' + (ov ? 'rgba(232,184,75,0.4)' : 'transparent'),
+                              }}>
+                                {ov && <WarnTriangle size={10} />}
+                                {m}
+                              </span>
+                            );
+                          }) : <span style={{ fontSize: 10.5, color: 'var(--t3)' }}>No markets — Sync or Edit the store to load them</span>}
+                        </div>
                       </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+
+                      {/* Right: stats */}
+                      <div style={{ display: 'flex', gap: 22, textAlign: 'right', flexShrink: 0 }}>
+                        <Stat label="Revenue" value={fmtCurrency(bs.totals.revenue)} accent={bs.totals.revenue > 0} />
+                        <Stat label="Orders" value={bs.totals.orders} />
+                        <Stat label="Units" value={bs.totals.units} />
+                      </div>
+                    </div>
+
+                    {/* Actions */}
+                    <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 14 }}>
+                      <button
+                        onClick={() => syncStore(bs.biq_stores?.id)}
+                        disabled={syncing === bs.biq_stores?.id}
+                        style={{ fontSize: 12, fontWeight: 700, color: '#fff', background: 'linear-gradient(135deg, #818CF8, #6366F1)', border: 'none', borderRadius: 8, padding: '7px 14px', cursor: 'pointer', boxShadow: 'var(--sh-brand)', opacity: syncing === bs.biq_stores?.id ? 0.7 : 1, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                        {syncing === bs.biq_stores?.id && <span style={{ width: 12, height: 12, borderRadius: '50%', border: '2px solid #fff', borderTopColor: 'transparent', animation: 'spin 0.6s linear infinite', display: 'inline-block' }} />}
+                        {syncing === bs.biq_stores?.id ? 'Syncing…' : 'Sync now'}
+                      </button>
+                      <button
+                        onClick={() => removeStore(bs.id)}
+                        style={{ fontSize: 12, fontWeight: 600, color: 'var(--t1)', background: 'var(--s1)', border: '1px solid var(--b2)', borderRadius: 8, padding: '7px 14px', cursor: 'pointer', transition: 'all 0.12s' }}
+                        onMouseEnter={e => { e.currentTarget.style.color = 'var(--red)'; e.currentTarget.style.borderColor = 'var(--red)'; e.currentTarget.style.background = 'var(--red-bg)'; }}
+                        onMouseLeave={e => { e.currentTarget.style.color = 'var(--t1)'; e.currentTarget.style.borderColor = 'var(--b2)'; e.currentTarget.style.background = 'var(--s1)'; }}>
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           )}
         </div>
       </div>
