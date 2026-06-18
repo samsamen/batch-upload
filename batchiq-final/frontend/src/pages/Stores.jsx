@@ -283,7 +283,23 @@ function EditStoreModal({ store, onClose, onSaved }) {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
   const [okMsg, setOkMsg] = useState(null);
+  const [gadsAccounts, setGadsAccounts] = useState([]);
+  const [gadsLoading, setGadsLoading] = useState(false);
+  const [gadsErr, setGadsErr] = useState(null);
   const set = (k) => (e) => setForm(f => ({ ...f, [k]: e.target.value }));
+
+  // Auto-load accounts when opening an edit for a gads-connected store
+  useEffect(() => {
+    if (store.gads_connected) loadGadsAccounts();
+  }, []);
+
+  async function loadGadsAccounts() {
+    setGadsLoading(true); setGadsErr(null);
+    try {
+      const r = await api.get(`/api/google-ads/accounts?store_id=${store.id}`);
+      setGadsAccounts(r.accounts || []);
+    } catch (e) { setGadsErr(e.message); } finally { setGadsLoading(false); }
+  }
 
   async function save() {
     if (!form.name.trim()) { setError('Name is required.'); return; }
@@ -347,9 +363,32 @@ function EditStoreModal({ store, onClose, onSaved }) {
 
           <div style={{ height: 1, background: 'var(--b1)', margin: '2px 0' }} />
           <div>
-            <Label>Google Ads account ID</Label>
-            <input placeholder="e.g. 1234567890 (digits only)" value={form.gads_customer_id} onChange={set('gads_customer_id')} style={{ fontFamily: "'Fira Code', monospace", fontSize: 12 }} />
-            <div style={{ fontSize: 10.5, color: 'var(--t3)', marginTop: 4 }}>The Google Ads customer ID for this store. Spend &amp; ROAS pull from this account on each sync. Connect Google Ads first under Settings.</div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+              <Label>Google Ads account</Label>
+              {store.gads_connected && (
+                <button onClick={loadGadsAccounts} disabled={gadsLoading} style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--brand)', background: 'var(--brand-l)', border: '1px solid var(--brand-l)', borderRadius: 5, padding: '2px 8px', cursor: 'pointer' }}>
+                  {gadsLoading ? 'Loading…' : 'Load accounts'}
+                </button>
+              )}
+            </div>
+            {!store.gads_connected ? (
+              <div style={{ fontSize: 11, color: 'var(--t3)', padding: '8px 0' }}>
+                Not connected to Google Ads yet. Close this and click <strong style={{ color: 'var(--t2)' }}>Connect Google Ads</strong> on the store row first.
+              </div>
+            ) : gadsAccounts.length > 0 ? (
+              <select value={form.gads_customer_id} onChange={set('gads_customer_id')} style={{ fontFamily: "'Fira Code', monospace", fontSize: 12 }}>
+                <option value="">— select an account —</option>
+                {gadsAccounts.map(a => (
+                  <option key={a.id} value={a.id} disabled={a.manager}>
+                    {a.name} · {a.id}{a.manager ? ' (manager)' : ''}{a.currency ? ` · ${a.currency}` : ''}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input placeholder="click 'Load accounts' or type the ID" value={form.gads_customer_id} onChange={set('gads_customer_id')} style={{ fontFamily: "'Fira Code', monospace", fontSize: 12 }} />
+            )}
+            <div style={{ fontSize: 10.5, color: 'var(--t3)', marginTop: 4 }}>Spend &amp; ROAS pull from this account on each sync.</div>
+            {gadsErr && <div style={{ fontSize: 10.5, color: 'var(--red)', marginTop: 4 }}>{gadsErr}</div>}
           </div>
 
           <div style={{ height: 1, background: 'var(--b1)', margin: '2px 0' }} />
@@ -382,6 +421,9 @@ function GadsCredentialsBlock({ cfg, onSaved }) {
     if (cfg) setForm(f => ({ ...f, client_id: cfg.client_id || '', login_customer_id: cfg.login_customer_id || '' }));
   }, [cfg]);
 
+  // When keys are managed by server env vars, there's nothing to configure here.
+  if (cfg?.env_managed) return null;
+
   const ready = cfg?.ready;
   const redirectUri = `${window.location.origin}/api/google-ads/callback`;
 
@@ -409,19 +451,27 @@ function GadsCredentialsBlock({ cfg, onSaved }) {
         <div style={{ padding: '4px 18px 18px', display: 'flex', flexDirection: 'column', gap: 12 }}>
           {msg && <div style={{ background: 'var(--green-bg)', border: '1px solid var(--green)', borderRadius: 8, padding: '8px 12px', fontSize: 12, color: 'var(--green)', fontWeight: 600 }}>{msg}</div>}
           {err && <div style={{ background: 'var(--red-bg)', border: '1px solid var(--red)', borderRadius: 8, padding: '8px 12px', fontSize: 12, color: 'var(--red)', fontWeight: 600 }}>{err}</div>}
-          <div style={{ fontSize: 11, color: 'var(--t2)', lineHeight: 1.6 }}>
-            These are your Google Cloud OAuth app keys — entered once, shared by all stores. Each store then connects its own Google account with its own button below.
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            <div><Label>OAuth Client ID</Label><input value={form.client_id} onChange={set('client_id')} placeholder="…apps.googleusercontent.com" style={{ fontFamily: "'Fira Code', monospace", fontSize: 12 }} /></div>
-            <div><Label>OAuth Client Secret</Label><input type="password" value={form.client_secret} onChange={set('client_secret')} placeholder={cfg?.has_client_secret ? 'saved — paste to change' : 'GOCSPX-…'} style={{ fontFamily: "'Fira Code', monospace", fontSize: 12 }} /></div>
-            <div><Label>Developer Token</Label><input type="password" value={form.developer_token} onChange={set('developer_token')} placeholder={cfg?.has_developer_token ? 'saved — paste to change' : 'developer token'} style={{ fontFamily: "'Fira Code', monospace", fontSize: 12 }} /></div>
-            <div><Label>MCC / Login Customer ID</Label><input value={form.login_customer_id} onChange={set('login_customer_id')} placeholder="123930783" style={{ fontFamily: "'Fira Code', monospace", fontSize: 12 }} /></div>
-          </div>
-          <div style={{ fontSize: 10.5, color: 'var(--t3)', lineHeight: 1.6 }}>
-            Add this redirect URI to your OAuth client in Google Cloud Console: <span style={{ fontFamily: "'Fira Code', monospace", color: 'var(--t2)' }}>{redirectUri}</span>
-          </div>
-          <div><Btn onClick={save} disabled={saving} variant="primary">{saving ? 'Saving…' : 'Save keys'}</Btn></div>
+          {cfg?.env_managed ? (
+            <div style={{ fontSize: 12, color: 'var(--t2)', lineHeight: 1.6 }}>
+              Keys are managed securely on the server (environment variables). Nothing to enter here — just use <strong style={{ color: 'var(--t1)' }}>Connect Google Ads</strong> on each store.
+            </div>
+          ) : (
+            <>
+              <div style={{ fontSize: 11, color: 'var(--t2)', lineHeight: 1.6 }}>
+                These are your Google Cloud OAuth app keys — entered once, shared by all stores. Each store then connects its own Google account with its own button below. For production, set these as Railway environment variables (GADS_CLIENT_ID, GADS_CLIENT_SECRET, GADS_DEVELOPER_TOKEN, GADS_LOGIN_CUSTOMER_ID) and this block disappears.
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div><Label>OAuth Client ID</Label><input value={form.client_id} onChange={set('client_id')} placeholder="…apps.googleusercontent.com" style={{ fontFamily: "'Fira Code', monospace", fontSize: 12 }} /></div>
+                <div><Label>OAuth Client Secret</Label><input type="password" value={form.client_secret} onChange={set('client_secret')} placeholder={cfg?.has_client_secret ? 'saved — paste to change' : 'GOCSPX-…'} style={{ fontFamily: "'Fira Code', monospace", fontSize: 12 }} /></div>
+                <div><Label>Developer Token</Label><input type="password" value={form.developer_token} onChange={set('developer_token')} placeholder={cfg?.has_developer_token ? 'saved — paste to change' : 'developer token'} style={{ fontFamily: "'Fira Code', monospace", fontSize: 12 }} /></div>
+                <div><Label>MCC / Login Customer ID</Label><input value={form.login_customer_id} onChange={set('login_customer_id')} placeholder="123930783" style={{ fontFamily: "'Fira Code', monospace", fontSize: 12 }} /></div>
+              </div>
+              <div style={{ fontSize: 10.5, color: 'var(--t3)', lineHeight: 1.6 }}>
+                Add this redirect URI to your OAuth client in Google Cloud Console: <span style={{ fontFamily: "'Fira Code', monospace", color: 'var(--t2)' }}>{redirectUri}</span>
+              </div>
+              <div><Btn onClick={save} disabled={saving} variant="primary">{saving ? 'Saving…' : 'Save keys'}</Btn></div>
+            </>
+          )}
         </div>
       )}
     </div>
