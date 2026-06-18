@@ -11,7 +11,7 @@ const { makeConverter } = require('../lib/currency');
 const router = express.Router();
 
 // ── Fetch + store Google Ads spend per market for a batch_store ────────────
-async function syncAdSpend(bsId, store, productIds, fromDate, toDate) {
+async function syncAdSpend(bsId, store, productIds, fromDate, toDate, marketRevByDate) {
   const cfg = await getConfig();
   // Per-store refresh token + per-store customer id are both required
   if (!store.gads_refresh_token || !store.gads_customer_id) return { spend: 0, markets: 0 };
@@ -66,13 +66,16 @@ async function syncAdSpend(bsId, store, productIds, fromDate, toDate) {
   let geoRows = [];
   try { geoRows = await gads.getSpendByGeo(queryCfg, token, store.gads_customer_id, fromDate, toDate); } catch {}
 
-  // Build per-date geo cost shares: { date: { FI: 0.6, SE: 0.4 } }
+  // Build per-date geo cost shares from geographic_view: { date: { GB: 0.5, US: 0.5 } }
   const geoByDate = {};
+  let geoTotalAll = 0;
   for (const g of geoRows) {
-    const market = geoConstantToCode(g.geoConstant) || 'ALL';
+    const market = geoConstantToCode(g.geoConstant) || null;
+    if (!market) continue; // skip unmapped geos rather than dumping into ALL
     if (!geoByDate[g.date]) geoByDate[g.date] = { total: 0, byMarket: {} };
     geoByDate[g.date].total += g.cost;
     geoByDate[g.date].byMarket[market] = (geoByDate[g.date].byMarket[market] || 0) + g.cost;
+    geoTotalAll += g.cost;
   }
 
   // Sum this batch's product spend per date (EUR)
@@ -86,15 +89,33 @@ async function syncAdSpend(bsId, store, productIds, fromDate, toDate) {
     prodByDate[r.date].impressions += r.impressions;
   }
 
-  // Apportion each date's product spend across markets by geo share
+  // Fallback split: if geographic_view gave us nothing usable, split spend across
+  // the markets where this batch actually made REVENUE (we know those per date).
+  // revByDateMarket is passed in from the caller (Shopify orders per country).
+  const revShareByDate = {};
+  if (geoTotalAll === 0 && marketRevByDate) {
+    for (const [date, byMkt] of Object.entries(marketRevByDate)) {
+      const total = Object.values(byMkt).reduce((s, v) => s + v, 0);
+      if (total > 0) {
+        revShareByDate[date] = {};
+        for (const [mkt, v] of Object.entries(byMkt)) revShareByDate[date][mkt] = v / total;
+      }
+    }
+  }
+
+  // Apportion each date's product spend across markets
   const agg = {}; // key date|market
   for (const [date, p] of Object.entries(prodByDate)) {
     const geo = geoByDate[date];
     let splits;
     if (geo && geo.total > 0) {
+      // Best: real geo cost share from Google
       splits = Object.entries(geo.byMarket).map(([market, cost]) => ({ market, frac: cost / geo.total }));
+    } else if (revShareByDate[date]) {
+      // Fallback: split by where revenue happened that day
+      splits = Object.entries(revShareByDate[date]).map(([market, frac]) => ({ market, frac }));
     } else {
-      splits = [{ market: 'ALL', frac: 1 }]; // no geo data → lump under ALL
+      splits = [{ market: 'ALL', frac: 1 }];
     }
     for (const { market, frac } of splits) {
       const key = `${date}|${market}`;
@@ -238,10 +259,18 @@ async function syncBatchStore(batchStore, fromDate, toDate) {
     if (mErr) await logActivity('sync', 'warning', `${storeName}: market revenue store failed`, { error: mErr.message });
   }
 
+  // Build revenue-per-date-per-market map (used as fallback to split ad spend by geo)
+  const marketRevByDate = {};
+  for (const m of Object.values(marketAgg)) {
+    if (!m.market || m.market === 'ALL') continue;
+    if (!marketRevByDate[m.date]) marketRevByDate[m.date] = {};
+    marketRevByDate[m.date][m.market] = (marketRevByDate[m.date][m.market] || 0) + m.revenue;
+  }
+
   // 6. Google Ads spend per market (only if this store has an account + GAds is connected)
   let adResult = { spend: 0, markets: 0 };
   try {
-    adResult = await syncAdSpend(bsId, store, productIds, fromDate, toDate);
+    adResult = await syncAdSpend(bsId, store, productIds, fromDate, toDate, marketRevByDate);
   } catch (err) {
     await logActivity('ads', 'warning', `${storeName}: ad spend sync error`, { error: err.message });
   }
