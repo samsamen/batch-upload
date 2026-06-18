@@ -111,3 +111,9 @@ CREATE INDEX IF NOT EXISTS idx_market_perf_bs_date ON biq_market_perf_daily(batc
 
 -- Per-store Google Ads refresh token (each store connects its own Google account)
 ALTER TABLE biq_stores ADD COLUMN IF NOT EXISTS gads_refresh_token TEXT;
+
+-- Live integration health flags (set by sync, not just "a token string exists")
+ALTER TABLE biq_stores ADD COLUMN IF NOT EXISTS shopify_ok BOOLEAN DEFAULT NULL;
+ALTER TABLE biq_stores ADD COLUMN IF NOT EXISTS shopify_checked_at TIMESTAMPTZ;
+ALTER TABLE biq_stores ADD COLUMN IF NOT EXISTS gads_ok BOOLEAN DEFAULT NULL;
+ALTER TABLE biq_stores ADD COLUMN IF NOT EXISTS gads_checked_at TIMESTAMPTZ;

@@ -6,6 +6,7 @@ const { getConfig } = require('./config');
 const { logActivity } = require('../lib/activity');
 const gads = require('../lib/googleAds');
 const { geoConstantToCode } = require('../lib/geoTargets');
+const { makeConverter } = require('../lib/currency');
 
 const router = express.Router();
 
@@ -20,6 +21,7 @@ async function syncAdSpend(bsId, store, productIds, fromDate, toDate) {
   try {
     token = await gads.getAccessToken(cfg.gads_client_id, cfg.gads_client_secret, store.gads_refresh_token);
   } catch (err) {
+    await supabase.from('biq_stores').update({ gads_ok: false, gads_checked_at: new Date().toISOString() }).eq('id', store.id).then(() => {}, () => {});
     await logActivity('ads', 'warning', `${store.name}: Google Ads auth failed`, { error: err.message });
     return { spend: 0, markets: 0 };
   }
@@ -30,10 +32,18 @@ async function syncAdSpend(bsId, store, productIds, fromDate, toDate) {
     // (no login-customer-id header). With an MCC, keep using it.
     const queryCfg = cfg.gads_login_customer_id ? cfg : { ...cfg, gads_login_customer_id: null };
     rows = await gads.getSpendByProductAndGeo(queryCfg, token, store.gads_customer_id, productIds, fromDate, toDate);
+    // Query succeeded → Google Ads integration is live & healthy
+    await supabase.from('biq_stores').update({ gads_ok: true, gads_checked_at: new Date().toISOString() }).eq('id', store.id).then(() => {}, () => {});
   } catch (err) {
+    await supabase.from('biq_stores').update({ gads_ok: false, gads_checked_at: new Date().toISOString() }).eq('id', store.id).then(() => {}, () => {});
     await logActivity('ads', 'warning', `${store.name}: Google Ads query failed`, { error: err.message });
     return { spend: 0, markets: 0 };
   }
+
+  // Google Ads spend comes in the account's currency → convert to EUR
+  let adCur = null;
+  try { adCur = await gads.getAccountCurrency(cfg.gads_login_customer_id ? cfg : { ...cfg, gads_login_customer_id: null }, token, store.gads_customer_id); } catch {}
+  const adToEur = await makeConverter(adCur || store.currency || 'EUR');
 
   // Aggregate by date + market
   const agg = {}; // key date|market
@@ -41,9 +51,9 @@ async function syncAdSpend(bsId, store, productIds, fromDate, toDate) {
     const market = geoConstantToCode(r.geoConstant) || 'ALL';
     const key = `${r.date}|${market}`;
     if (!agg[key]) agg[key] = { date: r.date, market, cost: 0, conversions: 0, conversion_value: 0, clicks: 0, impressions: 0 };
-    agg[key].cost += r.cost;
+    agg[key].cost += adToEur(r.cost);
     agg[key].conversions += r.conversions;
-    agg[key].conversion_value += r.conversionValue;
+    agg[key].conversion_value += adToEur(r.conversionValue);
     agg[key].clicks += r.clicks;
     agg[key].impressions += r.impressions;
   }
@@ -82,7 +92,14 @@ async function syncBatchStore(batchStore, fromDate, toDate) {
     if (store.client_id && store.client_secret) {
       store.access_token = await getAccessToken(store.shop_domain, store.client_id, store.client_secret);
     }
+    // Token refresh worked → Shopify integration is live & healthy
+    await supabase.from('biq_stores').update({
+      shopify_ok: true, shopify_checked_at: new Date().toISOString(), access_token: store.access_token,
+    }).eq('id', store.id);
   } catch (err) {
+    await supabase.from('biq_stores').update({
+      shopify_ok: false, shopify_checked_at: new Date().toISOString(),
+    }).eq('id', store.id).then(() => {}, () => {});
     await logActivity('error', 'error', `${storeName}: token refresh failed`, { error: err.message });
     throw new Error(`Token refresh failed for ${store.shop_domain}: ${err.message}`);
   }
@@ -136,17 +153,21 @@ async function syncBatchStore(batchStore, fromDate, toDate) {
     (byDate[date] = byDate[date] || []).push(order);
   }
 
+  // Currency converter: Shopify revenue comes in the store's currency → convert to EUR
+  const toEur = await makeConverter(store.currency || 'EUR');
+
   // 4. Compute + upsert performance
   let daysUpserted = 0, totalRevenue = 0, totalOrders = 0;
   for (const [date, dayOrders] of Object.entries(byDate)) {
     const perf = calcPerformance(productIds, dayOrders);
     if (perf.orders === 0) continue;
+    const revenueEur = toEur(perf.revenue);
     const { error } = await supabase.from('biq_performance_daily').upsert(
-      { batch_store_id: bsId, date, orders: perf.orders, revenue: perf.revenue, units_sold: perf.units, synced_at: new Date().toISOString() },
+      { batch_store_id: bsId, date, orders: perf.orders, revenue: revenueEur, units_sold: perf.units, synced_at: new Date().toISOString() },
       { onConflict: 'batch_store_id,date' }
     );
     if (error) throw new Error(`DB upsert failed for ${date}: ${error.message}`);
-    daysUpserted++; totalRevenue += perf.revenue; totalOrders += perf.orders;
+    daysUpserted++; totalRevenue += revenueEur; totalOrders += perf.orders;
   }
 
   // 5. Per-market revenue (group orders by date + country, only batch products)
@@ -158,7 +179,7 @@ async function syncBatchStore(batchStore, fromDate, toDate) {
     if (perf.orders === 0) continue;
     const key = `${date}|${market}`;
     if (!marketAgg[key]) marketAgg[key] = { date, market, revenue: 0, orders: 0, units: 0 };
-    marketAgg[key].revenue += perf.revenue;
+    marketAgg[key].revenue += toEur(perf.revenue);
     marketAgg[key].orders += perf.orders;
     marketAgg[key].units += perf.units;
   }

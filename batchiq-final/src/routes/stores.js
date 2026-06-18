@@ -8,7 +8,7 @@ const router = express.Router();
 
 // GET /api/stores — list stores. ?include=all also returns disconnected ones.
 router.get('/', async (req, res) => {
-  const full = 'id, shop_domain, name, country, currency, markets, active, connected_at, gads_customer_id, gads_refresh_token, access_token, client_id';
+  const full = 'id, shop_domain, name, country, currency, markets, active, connected_at, gads_customer_id, gads_refresh_token, access_token, client_id, shopify_ok, gads_ok';
   const base = 'id, shop_domain, name, country, currency, markets, active, connected_at, access_token, client_id';
 
   async function run(cols) {
@@ -18,7 +18,7 @@ router.get('/', async (req, res) => {
   }
 
   let { data, error } = await run(full);
-  // If gads columns don't exist yet (migration not run), retry without them
+  // If new columns don't exist yet (migration not run), retry without them
   if (error) {
     const retry = await run(base);
     data = retry.data; error = retry.error;
@@ -29,9 +29,12 @@ router.get('/', async (req, res) => {
     id: s.id, shop_domain: s.shop_domain, name: s.name, country: s.country,
     currency: s.currency, markets: s.markets, active: s.active, connected_at: s.connected_at,
     gads_customer_id: s.gads_customer_id || null,
-    shopify_verified: !!(s.access_token && s.client_id),
+    // Shopify dot: green if last sync verified it OR (never synced yet but creds present)
+    shopify_verified: s.shopify_ok === true || (s.shopify_ok == null && !!(s.access_token && s.client_id)),
     gads_connected: !!s.gads_refresh_token,
-    gads_linked: !!(s.gads_refresh_token && s.gads_customer_id),
+    // Google Ads dot: green only if connected, account picked, and last query worked (or untested)
+    gads_linked: !!(s.gads_refresh_token && s.gads_customer_id) && (s.gads_ok === true || s.gads_ok == null),
+    gads_error: s.gads_ok === false,
   }));
   res.json(out);
 });

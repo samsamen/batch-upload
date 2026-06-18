@@ -178,11 +178,22 @@ async function listAccountsWithNames(cfg, accessToken) {
   return accounts;
 }
 
+// Fetch the account's currency code (e.g. 'USD'). Used to convert spend to EUR.
+async function getAccountCurrency(cfg, accessToken, customerId) {
+  try {
+    const gaql = 'SELECT customer.currency_code FROM customer LIMIT 1';
+    const useCfg = cfg.gads_login_customer_id ? cfg : { ...cfg, gads_login_customer_id: null };
+    const rows = await searchStream(useCfg, accessToken, customerId, gaql);
+    return rows[0]?.customer?.currencyCode || null;
+  } catch { return null; }
+}
+
 module.exports = {
   getAccessToken,
   searchStream,
   getSpendByProductAndGeo,
   listAccessibleCustomers,
   listAccountsWithNames,
+  getAccountCurrency,
   GADS_API_VERSION,
 };

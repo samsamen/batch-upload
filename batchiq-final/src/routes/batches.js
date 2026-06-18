@@ -82,6 +82,18 @@ router.get('/', async (req, res) => {
 
 // ── GET /api/batches/:id — single batch with full detail ───────────────────
 router.get('/:id', async (req, res) => {
+  // Optional date-range filter (?range=7|30|90|all). Default: all-time.
+  let cutoff = null;
+  const range = req.query.range;
+  if (range && range !== 'all') {
+    const days = parseInt(range);
+    if (!isNaN(days)) {
+      const d = new Date();
+      d.setDate(d.getDate() - days);
+      cutoff = d.toISOString().slice(0, 10);
+    }
+  }
+
   const { data, error } = await supabase
     .from('biq_batches')
     .select(`
@@ -99,8 +111,16 @@ router.get('/:id', async (req, res) => {
 
   if (error || !data) return res.status(404).json({ error: 'Batch not found' });
 
+  // Helper: keep a daily row only if it's within the selected range
+  const inRange = (d) => !cutoff || (d && d >= cutoff);
+
   // Build per-store and per-market rollups so the frontend doesn't have to
   for (const bs of (data.biq_batch_stores || [])) {
+    // Filter every daily series by the cutoff before rolling up
+    bs.biq_performance_daily = (bs.biq_performance_daily || []).filter(p => inRange(p.date));
+    bs.biq_ad_spend_daily = (bs.biq_ad_spend_daily || []).filter(a => inRange(a.date));
+    bs.biq_market_perf_daily = (bs.biq_market_perf_daily || []).filter(m => inRange(m.date));
+
     const revenue = (bs.biq_performance_daily || []).reduce((s, p) => s + parseFloat(p.revenue || 0), 0);
     const orders = (bs.biq_performance_daily || []).reduce((s, p) => s + (p.orders || 0), 0);
     const units = (bs.biq_performance_daily || []).reduce((s, p) => s + (p.units_sold || 0), 0);

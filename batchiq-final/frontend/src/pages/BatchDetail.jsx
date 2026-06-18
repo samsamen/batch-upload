@@ -309,11 +309,12 @@ export default function BatchDetail() {
   const [error, setError]         = useState(null);
   const [showAddStore, setAddStore] = useState(false);
   const [syncing, setSyncing]     = useState(null);
+  const [range, setRange]         = useState('all');
 
-  useEffect(() => { load(); }, [id]);
+  useEffect(() => { load(); }, [id, range]);
 
   async function load() {
-    try { setLoading(true); setBatch(await api.get(`/api/batches/${id}`)); }
+    try { setLoading(true); setBatch(await api.get(`/api/batches/${id}?range=${range}`)); }
     catch (err) { setError(err.message); } finally { setLoading(false); }
   }
 
@@ -457,12 +458,35 @@ export default function BatchDetail() {
 
       <div style={{ padding: '24px 32px', display: 'flex', flexDirection: 'column', gap: 24 }}>
 
+        {/* Main reason — the thesis, the WHY this batch exists, with a gold glow */}
+        {batch.thesis && (
+          <div style={{
+            position: 'relative',
+            background: 'linear-gradient(135deg, rgba(232,184,75,0.10), rgba(232,184,75,0.03))',
+            border: '1px solid rgba(232,184,75,0.35)',
+            borderRadius: 12,
+            padding: '18px 22px',
+            boxShadow: '0 0 0 1px rgba(232,184,75,0.08), 0 4px 24px -6px rgba(232,184,75,0.35)',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
+                <path d="M12 2l2.4 7.4H22l-6 4.6 2.3 7.4-6.3-4.6L5.7 21.4 8 14 2 9.4h7.6L12 2z" fill="var(--gold)" />
+              </svg>
+              <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--gold)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Main reason for this batch</span>
+            </div>
+            <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--t1)', lineHeight: 1.5 }}>{batch.thesis}</div>
+            {batch.source && (
+              <div style={{ marginTop: 10, fontSize: 11.5, color: 'var(--t2)' }}>
+                <span style={{ color: 'var(--gold)', fontWeight: 700 }}>Source:</span> {batch.source}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Metadata + totals */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 280px', gap: 20 }}>
           {/* Left: metadata */}
           <div style={{ background: 'var(--s1)', border: '1px solid var(--b1)', borderRadius: 5, padding: 20 }}>
-            {batch.source && <MetaField label="Source" value={batch.source} />}
-            {batch.thesis && <MetaField label="Thesis" value={batch.thesis} />}
             {batch.validation_notes && <MetaField label="Validation" value={batch.validation_notes} />}
 
             {batch.batch_tag && (
@@ -495,7 +519,16 @@ export default function BatchDetail() {
 
           {/* Right: totals */}
           <div style={{ background: 'var(--s1)', border: '1px solid var(--b1)', borderRadius: 5, padding: 20 }}>
-            <Label style={{ marginBottom: 16 }}>All-time totals</Label>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <Label style={{ margin: 0 }}>{range === 'all' ? 'All-time totals' : `Last ${range} days`}</Label>
+              <select value={range} onChange={e => setRange(e.target.value)}
+                style={{ fontSize: 11, fontFamily: "'Fira Code', monospace", padding: '4px 8px', borderRadius: 6, background: 'var(--s2)', border: '1px solid var(--b2)', color: 'var(--t1)', cursor: 'pointer' }}>
+                <option value="7">7 days</option>
+                <option value="30">30 days</option>
+                <option value="90">90 days</option>
+                <option value="all">All time</option>
+              </select>
+            </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
               <BigStat label="Revenue" value={fmtCurrency(grand.revenue)} gold={grand.revenue > 0} />
               <div style={{ height: 1, background: 'var(--b1)' }} />
