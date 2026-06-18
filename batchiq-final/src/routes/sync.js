@@ -45,17 +45,53 @@ async function syncAdSpend(bsId, store, productIds, fromDate, toDate) {
   try { adCur = await gads.getAccountCurrency(cfg.gads_login_customer_id ? cfg : { ...cfg, gads_login_customer_id: null }, token, store.gads_customer_id); } catch {}
   const adToEur = await makeConverter(adCur || store.currency || 'EUR');
 
-  // Aggregate by date + market
-  const agg = {}; // key date|market
+  const queryCfg = cfg.gads_login_customer_id ? cfg : { ...cfg, gads_login_customer_id: null };
+
+  // rows = product-level spend (this batch's products), per date. No geo in this view.
+  // To get per-market spend, fetch the account's geo split per date and apportion
+  // each day's product spend across markets by that day's geo cost share.
+  let geoRows = [];
+  try { geoRows = await gads.getSpendByGeo(queryCfg, token, store.gads_customer_id, fromDate, toDate); } catch {}
+
+  // Build per-date geo cost shares: { date: { FI: 0.6, SE: 0.4 } }
+  const geoByDate = {};
+  for (const g of geoRows) {
+    const market = geoConstantToCode(g.geoConstant) || 'ALL';
+    if (!geoByDate[g.date]) geoByDate[g.date] = { total: 0, byMarket: {} };
+    geoByDate[g.date].total += g.cost;
+    geoByDate[g.date].byMarket[market] = (geoByDate[g.date].byMarket[market] || 0) + g.cost;
+  }
+
+  // Sum this batch's product spend per date (EUR)
+  const prodByDate = {}; // date -> { cost, conversions, conversion_value, clicks, impressions }
   for (const r of rows) {
-    const market = geoConstantToCode(r.geoConstant) || 'ALL';
-    const key = `${r.date}|${market}`;
-    if (!agg[key]) agg[key] = { date: r.date, market, cost: 0, conversions: 0, conversion_value: 0, clicks: 0, impressions: 0 };
-    agg[key].cost += adToEur(r.cost);
-    agg[key].conversions += r.conversions;
-    agg[key].conversion_value += adToEur(r.conversionValue);
-    agg[key].clicks += r.clicks;
-    agg[key].impressions += r.impressions;
+    if (!prodByDate[r.date]) prodByDate[r.date] = { cost: 0, conversions: 0, conversion_value: 0, clicks: 0, impressions: 0 };
+    prodByDate[r.date].cost += adToEur(r.cost);
+    prodByDate[r.date].conversions += r.conversions;
+    prodByDate[r.date].conversion_value += adToEur(r.conversionValue);
+    prodByDate[r.date].clicks += r.clicks;
+    prodByDate[r.date].impressions += r.impressions;
+  }
+
+  // Apportion each date's product spend across markets by geo share
+  const agg = {}; // key date|market
+  for (const [date, p] of Object.entries(prodByDate)) {
+    const geo = geoByDate[date];
+    let splits;
+    if (geo && geo.total > 0) {
+      splits = Object.entries(geo.byMarket).map(([market, cost]) => ({ market, frac: cost / geo.total }));
+    } else {
+      splits = [{ market: 'ALL', frac: 1 }]; // no geo data → lump under ALL
+    }
+    for (const { market, frac } of splits) {
+      const key = `${date}|${market}`;
+      if (!agg[key]) agg[key] = { date, market, cost: 0, conversions: 0, conversion_value: 0, clicks: 0, impressions: 0 };
+      agg[key].cost += p.cost * frac;
+      agg[key].conversions += p.conversions * frac;
+      agg[key].conversion_value += p.conversion_value * frac;
+      agg[key].clicks += Math.round(p.clicks * frac);
+      agg[key].impressions += Math.round(p.impressions * frac);
+    }
   }
 
   const upserts = Object.values(agg).map(a => ({ batch_store_id: bsId, ...a, synced_at: new Date().toISOString() }));

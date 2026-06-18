@@ -742,10 +742,10 @@ export default function Stores() {
                     <td style={{ padding: '11px 20px' }}>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
                         <StatusDot on={s.shopify_verified} label="Shopify" onText="Verified" offText="Not verified" />
-                        <StatusDot on={s.gads_linked} label="Google Ads" onText="Active" offText={s.gads_connected ? 'Pick account' : 'Not connected'} />
-                        {s.gads_connected && !s.gads_linked && (
+                        <StatusDot on={s.gads_linked} label="Google Ads" onText="Active" offText={s.gads_account_picked ? (s.gads_error ? 'Error — check Activity' : 'Active') : (s.gads_connected ? 'Pick account' : 'Not connected')} />
+                        {s.gads_connected && !s.gads_account_picked && (
                           <InlineGadsAccountPicker store={s} onPicked={(cid) => {
-                            setStores(p => p.map(x => x.id === s.id ? { ...x, gads_customer_id: cid, gads_linked: true } : x));
+                            setStores(p => p.map(x => x.id === s.id ? { ...x, gads_customer_id: cid, gads_account_picked: true, gads_linked: true } : x));
                             setSuccess(`${s.name}: Google Ads account linked.`);
                           }} onError={setError} />
                         )}

@@ -23,7 +23,7 @@ app.use(cors({ origin: (origin, cb) => cb(null, true), credentials: true }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-const BUILD_VERSION = 'v3.0-currency-inline-picker-ctr';
+const BUILD_VERSION = 'v3.1-geo-split-spend-fix';
 const BUILD_TIME = new Date().toISOString();
 
 app.get('/health', (req, res) => {

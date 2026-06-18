@@ -51,18 +51,18 @@ async function searchStream(cfg, accessToken, customerId, gaql) {
 
 // Get spend per product-id per market(geo) per day for a date range.
 // productIds = array of Shopify/GMC product ids (strings).
-// Returns: [{ date, market, productId, cost, conversions, conversionValue, clicks, impressions }]
+// Returns: [{ date, productId, cost, conversions, conversionValue, clicks, impressions }]
+// NOTE: shopping_performance_view PROHIBITS segments.geo_target_country, so this
+// query is product-level only (no geo). Per-country spend comes from a separate
+// geographic_view query (getSpendByGeo) since the two segments can't be combined.
 async function getSpendByProductAndGeo(cfg, accessToken, customerId, productIds, fromDate, toDate) {
   if (!productIds || productIds.length === 0) return [];
   const idSet = new Set(productIds.map(String));
 
-  // shopping_performance_view exposes segments.product_item_id and geographic segments.
-  // We segment by date + product_item_id + geo country.
   const gaql = `
     SELECT
       segments.date,
       segments.product_item_id,
-      segments.geo_target_country,
       metrics.cost_micros,
       metrics.conversions,
       metrics.conversions_value,
@@ -79,13 +79,47 @@ async function getSpendByProductAndGeo(cfg, accessToken, customerId, productIds,
     const m = r.metrics || {};
     const pid = String(seg.productItemId || '');
     if (!idSet.has(pid)) continue; // only this batch's products
-    // geo_target_country comes as a resource name like geoTargetConstants/2056 (Belgium).
-    // We map it later; store the raw constant id for now, resolved to country code in resolver.
+    out.push({
+      date: seg.date,
+      geoConstant: null, // not available in this view
+      productId: pid,
+      cost: (parseInt(m.costMicros || '0', 10)) / 1e6,
+      conversions: parseFloat(m.conversions || '0'),
+      conversionValue: parseFloat(m.conversionsValue || '0'),
+      clicks: parseInt(m.clicks || '0', 10),
+      impressions: parseInt(m.impressions || '0', 10),
+    });
+  }
+  return out;
+}
+
+// Per-country spend via geographic_view (campaign/account level — can't filter by
+// product). Returns [{ date, geoConstant, cost, clicks, impressions, conversions, conversionValue }].
+// Used to split a batch's spend across markets proportionally.
+async function getSpendByGeo(cfg, accessToken, customerId, fromDate, toDate) {
+  const gaql = `
+    SELECT
+      segments.date,
+      segments.geo_target_country,
+      metrics.cost_micros,
+      metrics.conversions,
+      metrics.conversions_value,
+      metrics.clicks,
+      metrics.impressions
+    FROM geographic_view
+    WHERE segments.date BETWEEN '${fromDate}' AND '${toDate}'
+  `;
+  let rows;
+  try { rows = await searchStream(cfg, accessToken, customerId, gaql); }
+  catch { return []; } // geo breakdown is best-effort; never block the main sync
+  const out = [];
+  for (const r of rows) {
+    const seg = r.segments || {};
+    const m = r.metrics || {};
     const geoRaw = seg.geoTargetCountry || '';
     out.push({
       date: seg.date,
       geoConstant: geoRaw ? String(geoRaw).split('/').pop() : null,
-      productId: pid,
       cost: (parseInt(m.costMicros || '0', 10)) / 1e6,
       conversions: parseFloat(m.conversions || '0'),
       conversionValue: parseFloat(m.conversionsValue || '0'),
@@ -192,6 +226,7 @@ module.exports = {
   getAccessToken,
   searchStream,
   getSpendByProductAndGeo,
+  getSpendByGeo,
   listAccessibleCustomers,
   listAccountsWithNames,
   getAccountCurrency,

@@ -32,7 +32,9 @@ router.get('/', async (req, res) => {
     // Shopify dot: green if last sync verified it OR (never synced yet but creds present)
     shopify_verified: s.shopify_ok === true || (s.shopify_ok == null && !!(s.access_token && s.client_id)),
     gads_connected: !!s.gads_refresh_token,
-    // Google Ads dot: green only if connected, account picked, and last query worked (or untested)
+    // An account is "picked" purely if a customer id is saved — independent of query health.
+    gads_account_picked: !!(s.gads_refresh_token && s.gads_customer_id),
+    // "linked & healthy": picked AND last query didn't fail
     gads_linked: !!(s.gads_refresh_token && s.gads_customer_id) && (s.gads_ok === true || s.gads_ok == null),
     gads_error: s.gads_ok === false,
   }));
