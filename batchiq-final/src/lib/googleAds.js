@@ -51,13 +51,16 @@ async function searchStream(cfg, accessToken, customerId, gaql) {
 
 // Get spend per product-id per market(geo) per day for a date range.
 // productIds = array of Shopify/GMC product ids (strings).
-// Returns: [{ date, productId, cost, conversions, conversionValue, clicks, impressions }]
-// NOTE: shopping_performance_view PROHIBITS segments.geo_target_country, so this
-// query is product-level only (no geo). Per-country spend comes from a separate
-// geographic_view query (getSpendByGeo) since the two segments can't be combined.
+// Returns: { rows:[...], diag:{...} }
+// rows: [{ date, productId, cost, ... }] for this batch's products
+// diag: matching diagnostics so the UI can show WHY spend is 0 if it is
+// NOTE: shopping_performance_view PROHIBITS segments.geo_target_country.
 async function getSpendByProductAndGeo(cfg, accessToken, customerId, productIds, fromDate, toDate) {
-  if (!productIds || productIds.length === 0) return [];
-  const idSet = new Set(productIds.map(String));
+  if (!productIds || productIds.length === 0) return { rows: [], diag: { reason: 'no_product_ids' } };
+
+  // Shopify product IDs we're looking for, as strings
+  const wanted = productIds.map(String);
+  const wantedSet = new Set(wanted);
 
   const gaql = `
     SELECT
@@ -72,25 +75,61 @@ async function getSpendByProductAndGeo(cfg, accessToken, customerId, productIds,
     WHERE segments.date BETWEEN '${fromDate}' AND '${toDate}'
   `;
 
-  const rows = await searchStream(cfg, accessToken, customerId, gaql);
+  const rawRows = await searchStream(cfg, accessToken, customerId, gaql);
+
   const out = [];
-  for (const r of rows) {
+  const seenGoogleIds = new Set();
+  let totalSpendAllProducts = 0;
+  let matchedSpend = 0;
+
+  for (const r of rawRows) {
     const seg = r.segments || {};
     const m = r.metrics || {};
-    const pid = String(seg.productItemId || '');
-    if (!idSet.has(pid)) continue; // only this batch's products
+    const rawPid = String(seg.productItemId || '');
+    if (rawPid) seenGoogleIds.add(rawPid);
+    const cost = (parseInt(m.costMicros || '0', 10)) / 1e6;
+    totalSpendAllProducts += cost;
+
+    // Flexible match: Google's product_item_id often wraps the Shopify ID,
+    // e.g. "shopify_GB_8472937_42938" or "online:en:GB:8472937". Match if the
+    // raw id equals a wanted id, OR contains a wanted id as a token.
+    let matchedShopifyId = null;
+    if (wantedSet.has(rawPid)) {
+      matchedShopifyId = rawPid;
+    } else {
+      // split on common separators and look for any wanted id among tokens
+      const tokens = rawPid.split(/[^0-9]+/).filter(Boolean);
+      for (const t of tokens) {
+        if (wantedSet.has(t)) { matchedShopifyId = t; break; }
+      }
+    }
+    if (!matchedShopifyId) continue;
+
+    matchedSpend += cost;
     out.push({
       date: seg.date,
-      geoConstant: null, // not available in this view
-      productId: pid,
-      cost: (parseInt(m.costMicros || '0', 10)) / 1e6,
+      geoConstant: null,
+      productId: matchedShopifyId,
+      cost,
       conversions: parseFloat(m.conversions || '0'),
       conversionValue: parseFloat(m.conversionsValue || '0'),
       clicks: parseInt(m.clicks || '0', 10),
       impressions: parseInt(m.impressions || '0', 10),
     });
   }
-  return out;
+
+  const diag = {
+    google_rows: rawRows.length,
+    distinct_google_ids: seenGoogleIds.size,
+    sample_google_ids: Array.from(seenGoogleIds).slice(0, 5),
+    wanted_count: wanted.length,
+    sample_wanted_ids: wanted.slice(0, 5),
+    matched_rows: out.length,
+    total_spend_all_products: Number(totalSpendAllProducts.toFixed(2)),
+    matched_spend: Number(matchedSpend.toFixed(2)),
+  };
+
+  return { rows: out, diag };
 }
 
 // Per-country spend via geographic_view (campaign/account level — can't filter by

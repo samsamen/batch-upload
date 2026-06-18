@@ -23,7 +23,7 @@ app.use(cors({ origin: (origin, cb) => cb(null, true), credentials: true }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-const BUILD_VERSION = 'v3.1-geo-split-spend-fix';
+const BUILD_VERSION = 'v3.3-product-id-match-diag';
 const BUILD_TIME = new Date().toISOString();
 
 app.get('/health', (req, res) => {
@@ -44,8 +44,19 @@ app.use('/api/google-ads', googleAdsRoutes);
 
 // Serve frontend — built into backend/public during Railway build
 const frontendDist = path.join(__dirname, 'public');
-app.use(express.static(frontendDist));
+// Serve hashed assets with long cache, but never cache index.html (so a new
+// deploy is picked up immediately instead of the browser serving a stale shell).
+app.use(express.static(frontendDist, {
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('index.html')) {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    } else {
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    }
+  },
+}));
 app.get('*', (req, res) => {
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
   res.sendFile(path.join(frontendDist, 'index.html'));
 });
 

@@ -26,18 +26,31 @@ async function syncAdSpend(bsId, store, productIds, fromDate, toDate) {
     return { spend: 0, markets: 0 };
   }
 
-  let rows;
+  let rows, diag;
   try {
     // Individual mode: when no MCC is configured, query the account as itself
     // (no login-customer-id header). With an MCC, keep using it.
     const queryCfg = cfg.gads_login_customer_id ? cfg : { ...cfg, gads_login_customer_id: null };
-    rows = await gads.getSpendByProductAndGeo(queryCfg, token, store.gads_customer_id, productIds, fromDate, toDate);
+    const result = await gads.getSpendByProductAndGeo(queryCfg, token, store.gads_customer_id, productIds, fromDate, toDate);
+    rows = result.rows; diag = result.diag;
     // Query succeeded → Google Ads integration is live & healthy
     await supabase.from('biq_stores').update({ gads_ok: true, gads_checked_at: new Date().toISOString() }).eq('id', store.id).then(() => {}, () => {});
   } catch (err) {
     await supabase.from('biq_stores').update({ gads_ok: false, gads_checked_at: new Date().toISOString() }).eq('id', store.id).then(() => {}, () => {});
     await logActivity('ads', 'warning', `${store.name}: Google Ads query failed`, { error: err.message });
     return { spend: 0, markets: 0 };
+  }
+
+  // Diagnostics: if the account HAS spend but none matched this batch's products,
+  // surface it so you can see the ID-format mismatch instead of a silent €0.
+  if (diag && diag.matched_rows === 0 && diag.total_spend_all_products > 0) {
+    await logActivity('ads', 'warning',
+      `${store.name}: account has €${diag.total_spend_all_products} spend but 0 matched this batch's products — likely a product-ID format mismatch`,
+      { diag });
+  } else if (diag) {
+    await logActivity('ads', 'info',
+      `${store.name}: Google Ads matched ${diag.matched_rows} rows, €${diag.matched_spend} spend (account total €${diag.total_spend_all_products})`,
+      { diag });
   }
 
   // Google Ads spend comes in the account's currency → convert to EUR
