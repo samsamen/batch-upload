@@ -1,6 +1,6 @@
 const fetch = require('node-fetch');
 
-const GADS_API_VERSION = 'v18';
+const GADS_API_VERSION = 'v21';
 const OAUTH_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 
 // Exchange the long-lived refresh token for a short-lived access token.
@@ -105,9 +105,17 @@ async function listAccessibleCustomers(cfg, accessToken) {
       'developer-token': cfg.gads_developer_token,
     },
   });
-  const json = await res.json();
-  if (!res.ok) throw new Error(`listAccessibleCustomers ${res.status}: ${JSON.stringify(json).slice(0, 300)}`);
-  // resourceNames like customers/1234567890
+  const text = await res.text();
+  let json;
+  try { json = JSON.parse(text); }
+  catch {
+    // Google returned HTML (usually a 404 for a sunset API version, or a auth wall)
+    throw new Error(`Google Ads returned a non-JSON response (status ${res.status}). This usually means the API version is wrong or the developer token lacks access. First 120 chars: ${text.slice(0, 120)}`);
+  }
+  if (!res.ok) {
+    const detail = json.error?.message || JSON.stringify(json).slice(0, 300);
+    throw new Error(`listAccessibleCustomers ${res.status}: ${detail}`);
+  }
   return (json.resourceNames || []).map(rn => String(rn).split('/').pop());
 }
 

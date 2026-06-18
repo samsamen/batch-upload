@@ -105,24 +105,37 @@ router.get('/:id', async (req, res) => {
     const orders = (bs.biq_performance_daily || []).reduce((s, p) => s + (p.orders || 0), 0);
     const units = (bs.biq_performance_daily || []).reduce((s, p) => s + (p.units_sold || 0), 0);
     const spend = (bs.biq_ad_spend_daily || []).reduce((s, a) => s + parseFloat(a.cost || 0), 0);
+    const clicks = (bs.biq_ad_spend_daily || []).reduce((s, a) => s + (a.clicks || 0), 0);
+    const impressions = (bs.biq_ad_spend_daily || []).reduce((s, a) => s + (a.impressions || 0), 0);
 
-    // Per-market: combine revenue (market_perf) + spend (ad_spend)
+    // Per-market: combine revenue (market_perf) + spend/clicks/impressions (ad_spend)
     const mkt = {};
     for (const m of (bs.biq_market_perf_daily || [])) {
       const k = m.market || 'ALL';
-      if (!mkt[k]) mkt[k] = { market: k, revenue: 0, orders: 0, units: 0, spend: 0 };
+      if (!mkt[k]) mkt[k] = { market: k, revenue: 0, orders: 0, units: 0, spend: 0, clicks: 0, impressions: 0 };
       mkt[k].revenue += parseFloat(m.revenue || 0);
       mkt[k].orders += (m.orders || 0);
       mkt[k].units += (m.units || 0);
     }
     for (const a of (bs.biq_ad_spend_daily || [])) {
       const k = a.market || 'ALL';
-      if (!mkt[k]) mkt[k] = { market: k, revenue: 0, orders: 0, units: 0, spend: 0 };
+      if (!mkt[k]) mkt[k] = { market: k, revenue: 0, orders: 0, units: 0, spend: 0, clicks: 0, impressions: 0 };
       mkt[k].spend += parseFloat(a.cost || 0);
+      mkt[k].clicks += (a.clicks || 0);
+      mkt[k].impressions += (a.impressions || 0);
     }
-    const markets = Object.values(mkt).map(m => ({ ...m, roas: m.spend > 0 ? m.revenue / m.spend : null })).sort((a, b) => b.revenue - a.revenue);
+    const markets = Object.values(mkt).map(m => ({
+      ...m,
+      roas: m.spend > 0 ? m.revenue / m.spend : null,
+      ctr: m.impressions > 0 ? (m.clicks / m.impressions) * 100 : null,
+    })).sort((a, b) => b.revenue - a.revenue);
 
-    bs.rollup = { revenue, orders, units, spend, roas: spend > 0 ? revenue / spend : null, markets };
+    bs.rollup = {
+      revenue, orders, units, spend, clicks, impressions,
+      roas: spend > 0 ? revenue / spend : null,
+      ctr: impressions > 0 ? (clicks / impressions) * 100 : null,
+      markets,
+    };
   }
 
   res.json(data);
