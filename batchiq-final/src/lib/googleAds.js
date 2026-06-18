@@ -111,10 +111,70 @@ async function listAccessibleCustomers(cfg, accessToken) {
   return (json.resourceNames || []).map(rn => String(rn).split('/').pop());
 }
 
+// List accounts WITH descriptive names.
+// With an MCC: query its customer_client tree (one call, all sub-accounts).
+// Without an MCC (individual logins): query each accessible account directly.
+async function listAccountsWithNames(cfg, accessToken) {
+  const ids = await listAccessibleCustomers(cfg, accessToken);
+  const accounts = [];
+  const seen = new Set();
+
+  const mcc = cfg.gads_login_customer_id ? String(cfg.gads_login_customer_id).replace(/\D/g, '') : null;
+
+  if (mcc) {
+    // MCC path — one query gives names for the whole tree
+    try {
+      const gaql = `
+        SELECT customer_client.id, customer_client.descriptive_name, customer_client.manager, customer_client.currency_code
+        FROM customer_client
+        WHERE customer_client.status = 'ENABLED'`;
+      const rows = await searchStream(cfg, accessToken, mcc, gaql);
+      for (const r of rows) {
+        const c = r.customerClient || {};
+        const id = String(c.id || '');
+        if (!id || seen.has(id)) continue;
+        seen.add(id);
+        accounts.push({
+          id,
+          name: c.descriptiveName || `Account ${id}`,
+          manager: !!c.manager,
+          currency: c.currencyCode || null,
+        });
+      }
+    } catch { /* fall through to per-account lookups */ }
+  } else {
+    // Individual path — query each accessible account for its own name
+    for (const id of ids) {
+      if (seen.has(String(id))) continue;
+      seen.add(String(id));
+      let name = `Account ${id}`, currency = null, manager = false;
+      try {
+        const gaql = `SELECT customer.id, customer.descriptive_name, customer.currency_code, customer.manager FROM customer LIMIT 1`;
+        // Query the account as itself (no login-customer-id header for individual accounts)
+        const rows = await searchStream({ ...cfg, gads_login_customer_id: null }, accessToken, id, gaql);
+        const c = rows[0]?.customer || {};
+        if (c.descriptiveName) name = c.descriptiveName;
+        if (c.currencyCode) currency = c.currencyCode;
+        manager = !!c.manager;
+      } catch { /* keep fallback name */ }
+      accounts.push({ id: String(id), name, manager, currency });
+    }
+  }
+
+  // Add any accessible ids not covered above
+  for (const id of ids) {
+    if (seen.has(String(id))) continue;
+    accounts.push({ id: String(id), name: `Account ${id}`, manager: false, currency: null });
+  }
+  accounts.sort((a, b) => (a.manager === b.manager ? 0 : a.manager ? 1 : -1));
+  return accounts;
+}
+
 module.exports = {
   getAccessToken,
   searchStream,
   getSpendByProductAndGeo,
   listAccessibleCustomers,
+  listAccountsWithNames,
   GADS_API_VERSION,
 };

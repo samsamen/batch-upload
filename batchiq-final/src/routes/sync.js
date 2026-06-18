@@ -26,7 +26,10 @@ async function syncAdSpend(bsId, store, productIds, fromDate, toDate) {
 
   let rows;
   try {
-    rows = await gads.getSpendByProductAndGeo(cfg, token, store.gads_customer_id, productIds, fromDate, toDate);
+    // Individual mode: when no MCC is configured, query the account as itself
+    // (no login-customer-id header). With an MCC, keep using it.
+    const queryCfg = cfg.gads_login_customer_id ? cfg : { ...cfg, gads_login_customer_id: null };
+    rows = await gads.getSpendByProductAndGeo(queryCfg, token, store.gads_customer_id, productIds, fromDate, toDate);
   } catch (err) {
     await logActivity('ads', 'warning', `${store.name}: Google Ads query failed`, { error: err.message });
     return { spend: 0, markets: 0 };

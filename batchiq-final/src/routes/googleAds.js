@@ -20,6 +20,7 @@ router.get('/config', async (req, res) => {
     login_customer_id: cfg.gads_login_customer_id || '',
     client_id: cfg.gads_client_id || '',
     ready: !!(cfg.gads_client_id && cfg.gads_client_secret && cfg.gads_developer_token),
+    env_managed: !!cfg._gads_from_env,
   });
 });
 
@@ -88,7 +89,7 @@ router.get('/callback', async (req, res) => {
   }
 });
 
-// GET /api/google-ads/accounts?store_id=... — accessible customer ids for this store's login
+// GET /api/google-ads/accounts?store_id=... — accessible accounts (with names) for this store
 router.get('/accounts', async (req, res) => {
   const { store_id } = req.query;
   if (!store_id) return res.status(400).json({ error: 'store_id is required.' });
@@ -98,8 +99,8 @@ router.get('/accounts', async (req, res) => {
   if (!store || !store.gads_refresh_token) return res.status(400).json({ error: 'Connect this store to Google Ads first.' });
   try {
     const token = await gads.getAccessToken(cfg.gads_client_id, cfg.gads_client_secret, store.gads_refresh_token);
-    const ids = await gads.listAccessibleCustomers(cfg, token);
-    res.json({ accounts: ids });
+    const accounts = await gads.listAccountsWithNames(cfg, token);
+    res.json({ accounts });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }

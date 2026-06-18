@@ -8,14 +8,23 @@ const router = express.Router();
 
 // GET /api/stores — list stores. ?include=all also returns disconnected ones.
 router.get('/', async (req, res) => {
-  let q = supabase
-    .from('biq_stores')
-    .select('id, shop_domain, name, country, currency, markets, active, connected_at, gads_customer_id, gads_refresh_token, access_token, client_id')
-    .order('name');
-  if (req.query.include !== 'all') q = q.eq('active', true);
-  const { data, error } = await q;
+  const full = 'id, shop_domain, name, country, currency, markets, active, connected_at, gads_customer_id, gads_refresh_token, access_token, client_id';
+  const base = 'id, shop_domain, name, country, currency, markets, active, connected_at, access_token, client_id';
+
+  async function run(cols) {
+    let q = supabase.from('biq_stores').select(cols).order('name');
+    if (req.query.include !== 'all') q = q.eq('active', true);
+    return q;
+  }
+
+  let { data, error } = await run(full);
+  // If gads columns don't exist yet (migration not run), retry without them
+  if (error) {
+    const retry = await run(base);
+    data = retry.data; error = retry.error;
+  }
   if (error) return res.status(500).json({ error: error.message });
-  // Derive status flags without leaking secrets
+
   const out = (data || []).map(s => ({
     id: s.id, shop_domain: s.shop_domain, name: s.name, country: s.country,
     currency: s.currency, markets: s.markets, active: s.active, connected_at: s.connected_at,
