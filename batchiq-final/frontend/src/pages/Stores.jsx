@@ -252,9 +252,13 @@ function EditStoreModal({ store, onClose, onSaved }) {
     name: store.name || '',
     currency: store.currency || 'EUR',
     markets: (store.markets || []).join(', '),
+    client_id: '',
+    client_secret: '',
   });
   const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
+  const [okMsg, setOkMsg] = useState(null);
   const set = (k) => (e) => setForm(f => ({ ...f, [k]: e.target.value }));
 
   async function save() {
@@ -262,31 +266,58 @@ function EditStoreModal({ store, onClose, onSaved }) {
     setLoading(true); setError(null);
     try {
       const markets = form.markets.split(',').map(m => m.trim().toUpperCase()).filter(Boolean);
-      const updated = await api.patch(`/api/stores/${store.id}`, {
-        name: form.name.trim(), currency: form.currency.trim() || 'EUR', markets,
-      });
+      const body = { name: form.name.trim(), currency: form.currency.trim() || 'EUR', markets };
+      if (form.client_id.trim()) body.client_id = form.client_id.trim();
+      if (form.client_secret.trim()) body.client_secret = form.client_secret.trim();
+      const updated = await api.patch(`/api/stores/${store.id}`, body);
       onSaved(updated); onClose();
     } catch (err) { setError(err.message); } finally { setLoading(false); }
   }
 
+  async function refreshMarkets() {
+    setRefreshing(true); setError(null); setOkMsg(null);
+    try {
+      const r = await api.post(`/api/stores/${store.id}/refresh-markets`, {});
+      const mk = (r.markets || []);
+      setForm(f => ({ ...f, markets: mk.join(', ') }));
+      setOkMsg(mk.length ? `Pulled ${mk.length} market(s) from Shopify.` : 'No markets returned (check read_markets scope).');
+    } catch (err) { setError(err.message); } finally { setRefreshing(false); }
+  }
+
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,20,35,0.5)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 20 }}>
-      <div style={{ background: 'var(--s1)', border: '1px solid var(--b2)', borderRadius: 14, width: 460, padding: 26, boxShadow: 'var(--sh-xl)' }}>
+      <div style={{ background: 'var(--s1)', border: '1px solid var(--b2)', borderRadius: 14, width: 480, padding: 26, boxShadow: 'var(--sh-xl)', maxHeight: '92vh', overflowY: 'auto' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
           <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--t1)' }}>Edit store</div>
           <button onClick={onClose} style={{ width: 30, height: 30, borderRadius: 8, color: 'var(--t3)', background: 'var(--s2)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>✕</button>
         </div>
 
         {error && <div style={{ background: 'var(--red-bg)', border: '1px solid var(--red)', borderRadius: 9, padding: '9px 13px', marginBottom: 14, fontSize: 12.5, color: 'var(--red)', fontWeight: 600 }}>{error}</div>}
+        {okMsg && <div style={{ background: 'var(--green-bg)', border: '1px solid var(--green)', borderRadius: 9, padding: '9px 13px', marginBottom: 14, fontSize: 12.5, color: 'var(--green)', fontWeight: 600 }}>{okMsg}</div>}
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <div style={{ fontSize: 11, color: 'var(--t3)', fontFamily: "'Fira Code', monospace" }}>{store.shop_domain}</div>
           <div><Label>Store name</Label><input value={form.name} onChange={set('name')} /></div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <div><Label>Currency</Label><input value={form.currency} onChange={set('currency')} style={{ fontFamily: "'Fira Code', monospace" }} /></div>
-            <div><Label>Markets</Label><input placeholder="FI, SE" value={form.markets} onChange={set('markets')} style={{ fontFamily: "'Fira Code', monospace" }} /></div>
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                <Label>Markets</Label>
+                <button onClick={refreshMarkets} disabled={refreshing} style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--brand)', background: 'var(--brand-l)', border: '1px solid var(--brand-l)', borderRadius: 5, padding: '2px 8px', cursor: 'pointer' }}>
+                  {refreshing ? 'Pulling…' : 'Pull from Shopify'}
+                </button>
+              </div>
+              <input placeholder="FI, SE" value={form.markets} onChange={set('markets')} style={{ fontFamily: "'Fira Code', monospace" }} />
+            </div>
           </div>
-          <div style={{ fontSize: 10.5, color: 'var(--t3)' }}>Markets are country codes, comma-separated (e.g. FI, SE, NO). Used to warn about overlap between stores.</div>
+          <div style={{ fontSize: 10.5, color: 'var(--t3)' }}>Country codes, comma-separated (e.g. FI, SE, NO). "Pull from Shopify" reads them from your store's Markets (needs read_markets scope).</div>
+
+          <div style={{ height: 1, background: 'var(--b1)', margin: '2px 0' }} />
+          <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--t2)' }}>App credentials <span style={{ fontWeight: 500, color: 'var(--t3)' }}>(leave empty to keep current)</span></div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div><Label>Client ID</Label><input placeholder="paste to update" value={form.client_id} onChange={set('client_id')} style={{ fontFamily: "'Fira Code', monospace", fontSize: 12 }} /></div>
+            <div><Label>Client Secret</Label><input type="password" placeholder="paste to update" value={form.client_secret} onChange={set('client_secret')} style={{ fontFamily: "'Fira Code', monospace", fontSize: 12 }} /></div>
+          </div>
         </div>
 
         <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 22 }}>

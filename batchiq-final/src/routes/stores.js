@@ -82,17 +82,34 @@ router.post('/connect', async (req, res) => {
   ).select('id, shop_domain, name, country, currency, markets').single();
 
   if (error) return res.status(500).json({ error: error.message });
+
+  // Onboard = sync immediately so data shows up right away (runs in background)
+  const { syncStoreNow } = require('./sync');
+  if (typeof syncStoreNow === 'function') {
+    syncStoreNow(data.id, 30).catch(err => console.error('Onboard sync:', err.message));
+  }
+
   res.status(201).json(data);
 });
 
 // PATCH /api/stores/:id
 router.patch('/:id', async (req, res) => {
-  const { name, country, currency, markets } = req.body;
+  const { name, country, currency, markets, client_id, client_secret } = req.body;
   const update = {};
   if (name !== undefined) update.name = name;
   if (country !== undefined) update.country = country;
   if (currency !== undefined) update.currency = currency;
   if (markets !== undefined) update.markets = markets;
+
+  // Update global app credentials if provided
+  if (client_id || client_secret) {
+    const cfg = await getConfig();
+    await supabase.from('biq_config').update({
+      shopify_client_id: client_id || cfg.shopify_client_id,
+      shopify_client_secret: client_secret || cfg.shopify_client_secret,
+      updated_at: new Date().toISOString(),
+    }).eq('id', 1);
+  }
 
   const { data, error } = await supabase
     .from('biq_stores')
@@ -102,6 +119,25 @@ router.patch('/:id', async (req, res) => {
     .single();
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
+});
+
+// POST /api/stores/:id/refresh-markets — pull markets fresh from Shopify
+router.post('/:id/refresh-markets', async (req, res) => {
+  const { data: store, error } = await supabase
+    .from('biq_stores').select('id, shop_domain, access_token').eq('id', req.params.id).single();
+  if (error || !store) return res.status(404).json({ error: 'Store not found' });
+
+  let token = store.access_token;
+  const cfg = await getConfig();
+  if (cfg.shopify_client_id && cfg.shopify_client_secret) {
+    try { token = await getAccessToken(store.shop_domain, cfg.shopify_client_id, cfg.shopify_client_secret); } catch {}
+  }
+
+  const markets = await getMarkets(store.shop_domain, token);
+  if (markets.length > 0) {
+    await supabase.from('biq_stores').update({ markets }).eq('id', store.id);
+  }
+  res.json({ success: true, markets });
 });
 
 // DELETE /api/stores/:id — soft delete

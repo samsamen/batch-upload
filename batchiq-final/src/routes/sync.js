@@ -1,7 +1,7 @@
 const express = require('express');
 const supabase = require('../lib/supabase');
 const { getProductsByTag, getOrdersForRange, calcPerformance } = require('../lib/shopifyApi');
-const { getAccessToken } = require('../lib/shopifyAuth');
+const { getAccessToken, getMarkets } = require('../lib/shopifyAuth');
 const { getConfig } = require('./config');
 const { logActivity } = require('../lib/activity');
 
@@ -35,6 +35,14 @@ async function syncBatchStore(batchStore, fromDate, toDate) {
     await logActivity('error', 'error', `${storeName}: token refresh failed`, { error: err.message });
     throw new Error(`Token refresh failed for ${store.shop_domain}: ${err.message}`);
   }
+
+  // Refresh markets (countries) from Shopify and store them
+  try {
+    const markets = await getMarkets(store.shop_domain, store.access_token);
+    if (markets.length > 0) {
+      await supabase.from('biq_stores').update({ markets }).eq('id', store.id);
+    }
+  } catch { /* markets are best-effort, never block the sync */ }
 
   // 1. Get product IDs with the effective tag
   let productIds = [];
@@ -142,25 +150,12 @@ router.post('/', async (req, res) => {
 // ── POST /api/sync/store/:storeId ──────────────────────────────────────────
 router.post('/store/:storeId', async (req, res) => {
   const days = parseInt(req.body?.days) || 30;
-  const toDate = new Date();
-  const fromDate = new Date();
-  fromDate.setDate(fromDate.getDate() - days);
-  const fromStr = fromDate.toISOString().split('T')[0];
-  const toStr = toDate.toISOString().split('T')[0];
-
-  const { data: batchStores, error } = await supabase
-    .from('biq_batch_stores')
-    .select(`id, shopify_tag, biq_stores ( id, shop_domain, name, access_token, active ), biq_batches ( status, batch_tag, name )`)
-    .eq('store_id', req.params.storeId);
-
-  if (error) return res.status(500).json({ error: error.message });
-
-  let totalDays = 0; const errors = [];
-  for (const bs of batchStores || []) {
-    try { const r = await syncBatchStore(bs, fromStr, toStr); totalDays += r.days; }
-    catch (err) { errors.push(err.message); }
+  try {
+    const r = await syncStoreNow(req.params.storeId, days);
+    res.json({ success: true, ...r });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
-  res.json({ success: true, synced: totalDays, errors });
 });
 
 // ── POST /api/sync/batch/:batchId — sync just one batch ───────────────────
@@ -187,5 +182,46 @@ router.post('/batch/:batchId', async (req, res) => {
   res.json({ success: true, synced: totalDays, products: totalProducts, errors });
 });
 
+// Reusable: sync one store now (markets + all its batch performance)
+async function syncStoreNow(storeId, days = 30) {
+  const toDate = new Date();
+  const fromDate = new Date();
+  fromDate.setDate(fromDate.getDate() - days);
+  const fromStr = fromDate.toISOString().split('T')[0];
+  const toStr = toDate.toISOString().split('T')[0];
+
+  // Always refresh markets for the store, even if it has no batches yet
+  try {
+    const { data: store } = await supabase
+      .from('biq_stores').select('id, shop_domain, name, access_token').eq('id', storeId).single();
+    if (store) {
+      let token = store.access_token;
+      const cfg = await getConfig();
+      if (cfg.shopify_client_id && cfg.shopify_client_secret) {
+        try { token = await getAccessToken(store.shop_domain, cfg.shopify_client_id, cfg.shopify_client_secret); } catch {}
+      }
+      const markets = await getMarkets(store.shop_domain, token);
+      if (markets.length > 0) await supabase.from('biq_stores').update({ markets }).eq('id', storeId);
+      await logActivity('store', 'success', `${store.name}: connected — markets refreshed (${markets.join(', ') || 'none'})`);
+    }
+  } catch (err) {
+    await logActivity('store', 'warning', `Market refresh failed for store`, { error: err.message });
+  }
+
+  // Sync performance for every batch linked to this store
+  const { data: batchStores } = await supabase
+    .from('biq_batch_stores')
+    .select(`id, shopify_tag, biq_stores ( id, shop_domain, name, access_token, active ), biq_batches ( status, batch_tag, name )`)
+    .eq('store_id', storeId);
+
+  let totalDays = 0; const errors = [];
+  for (const bs of batchStores || []) {
+    try { const r = await syncBatchStore(bs, fromStr, toStr); totalDays += r.days; }
+    catch (err) { errors.push(err.message); }
+  }
+  return { synced: totalDays, errors };
+}
+
 module.exports = router;
 module.exports.syncAll = syncAll;
+module.exports.syncStoreNow = syncStoreNow;
