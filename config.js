@@ -1,0 +1,605 @@
+const express = require('express');
+const supabase = require('../lib/supabase');
+const { logActivity } = require('../lib/activity');
+
+const router = express.Router();
+
+// ── Batch code generator: B2606-A, B2606-B … ──────────────────────────────
+async function generateBatchCode() {
+  const now = new Date();
+  const yy = String(now.getFullYear()).slice(-2);
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  const prefix = `B${yy}${mm}`;
+
+  const { data } = await supabase
+    .from('biq_batches')
+    .select('batch_code')
+    .like('batch_code', `${prefix}-%`);
+
+  const existingSuffixes = (data || [])
+    .map((r) => r.batch_code.replace(`${prefix}-`, ''))
+    .filter((s) => /^[A-Z]$/.test(s));
+
+  if (existingSuffixes.length === 0) return `${prefix}-A`;
+
+  const lastChar = existingSuffixes.sort().at(-1);
+  const nextChar = String.fromCharCode(lastChar.charCodeAt(0) + 1);
+  return `${prefix}-${nextChar}`;
+}
+
+// ── GET /api/batches — list all batches with aggregate performance ──────────
+router.get('/', async (req, res) => {
+  // Date range filter
+  const range = req.query.range;
+  let cutoff = null;
+  if (range && range !== 'all') {
+    const days = parseInt(range);
+    if (!isNaN(days)) {
+      const d = new Date();
+      d.setDate(d.getDate() - days);
+      cutoff = d.toISOString().split('T')[0];
+    }
+  }
+
+  const { data: batches, error } = await supabase
+    .from('biq_batches')
+    .select(`
+      id, batch_code, batch_tag, name, source, thesis, validation_notes, tags, sub_tags, changes, changes_note, status, stage, created_at, start_date, va_general_note, va_note_summary,
+      biq_batch_stores (
+        id, shopify_tag, product_count, product_count_active, product_count_draft, product_count_archived, notes, va_checked, va_checked_at, va_note,
+        biq_stores ( id, name, shop_domain, country, currency, markets, listing_guidance ),
+        biq_performance_daily ( date, orders, revenue, units_sold ),
+        biq_ad_spend_daily ( date, cost, clicks, impressions )
+      )
+    `)
+    .order('created_at', { ascending: false });
+
+  if (error) return res.status(500).json({ error: error.message });
+
+  // Aggregate totals per batch (respecting date range) + per-store rollups
+  const enriched = (batches || []).map((batch) => {
+    let totalOrders = 0, totalRevenue = 0, totalUnits = 0, totalSpend = 0, totalClicks = 0, totalImpr = 0;
+    const storeCount = batch.biq_batch_stores?.length || 0;
+
+    for (const bs of batch.biq_batch_stores || []) {
+      // Per-store revenue/orders/units
+      let sRev = 0, sOrd = 0, sUnits = 0;
+      for (const perf of bs.biq_performance_daily || []) {
+        if (cutoff && perf.date < cutoff) continue;
+        sOrd += perf.orders || 0;
+        sRev += parseFloat(perf.revenue || 0);
+        sUnits += perf.units_sold || 0;
+      }
+      // Per-store spend/clicks/impressions (from biq_ad_spend_daily)
+      let sSpend = 0, sClicks = 0, sImpr = 0;
+      for (const ad of bs.biq_ad_spend_daily || []) {
+        if (cutoff && ad.date < cutoff) continue;
+        sSpend += parseFloat(ad.cost || 0);
+        sClicks += ad.clicks || 0;
+        sImpr += ad.impressions || 0;
+      }
+      // Attach a compact rollup right on the store so the overview can show it inline
+      bs.rollup = {
+        revenue: sRev, orders: sOrd, units: sUnits,
+        spend: sSpend, clicks: sClicks, impressions: sImpr,
+        roas: sSpend > 0 ? sRev / sSpend : null,
+        ctr: sImpr > 0 ? (sClicks / sImpr) * 100 : null,
+      };
+
+      totalOrders += sOrd; totalRevenue += sRev; totalUnits += sUnits;
+      totalSpend += sSpend; totalClicks += sClicks; totalImpr += sImpr;
+    }
+
+    const roas = totalSpend > 0 ? totalRevenue / totalSpend : null;
+    const ctr = totalImpr > 0 ? (totalClicks / totalImpr) * 100 : null;
+
+    return {
+      ...batch,
+      totals: { orders: totalOrders, revenue: totalRevenue, units: totalUnits, ad_spend: totalSpend, roas, ctr, clicks: totalClicks, impressions: totalImpr },
+      store_count: storeCount,
+    };
+  });
+
+  res.json(enriched);
+});
+
+// ── GET /api/batches/:id — single batch with full detail ───────────────────
+router.get('/:id', async (req, res) => {
+  // Optional date-range filter (?range=7|30|90|all). Default: all-time.
+  let cutoff = null;
+  const range = req.query.range;
+  if (range && range !== 'all') {
+    const days = parseInt(range);
+    if (!isNaN(days)) {
+      const d = new Date();
+      d.setDate(d.getDate() - days);
+      cutoff = d.toISOString().slice(0, 10);
+    }
+  }
+
+  const { data, error } = await supabase
+    .from('biq_batches')
+    .select(`
+      id, batch_code, batch_tag, name, source, thesis, validation_notes, tags, sub_tags, changes, changes_note, status, stage, created_at, start_date, va_general_note, va_note_summary, gads_label_index, gads_label_value, labels_pushed_at, go_live_date, auto_publish, published_at,
+      biq_batch_stores (
+        id, shopify_tag, product_count, product_count_active, product_count_draft, product_count_archived, notes, added_at, va_checked, va_checked_at, va_note,
+        biq_stores ( id, name, shop_domain, country, currency, markets, gads_customer_id, listing_guidance ),
+        biq_performance_daily ( date, orders, revenue, units_sold ),
+        biq_ad_spend_daily ( date, market, cost, conversions, conversion_value, clicks, impressions ),
+        biq_market_perf_daily ( date, market, revenue, orders, units )
+      )
+    `)
+    .eq('id', req.params.id)
+    .single();
+
+  if (error || !data) return res.status(404).json({ error: 'Batch not found' });
+
+  // Helper: keep a daily row only if it's within the selected range
+  const inRange = (d) => !cutoff || (d && d >= cutoff);
+
+  // Build per-store and per-market rollups so the frontend doesn't have to
+  for (const bs of (data.biq_batch_stores || [])) {
+    // Filter every daily series by the cutoff before rolling up
+    bs.biq_performance_daily = (bs.biq_performance_daily || []).filter(p => inRange(p.date));
+    bs.biq_ad_spend_daily = (bs.biq_ad_spend_daily || []).filter(a => inRange(a.date));
+    bs.biq_market_perf_daily = (bs.biq_market_perf_daily || []).filter(m => inRange(m.date));
+
+    const revenue = (bs.biq_performance_daily || []).reduce((s, p) => s + parseFloat(p.revenue || 0), 0);
+    const orders = (bs.biq_performance_daily || []).reduce((s, p) => s + (p.orders || 0), 0);
+    const units = (bs.biq_performance_daily || []).reduce((s, p) => s + (p.units_sold || 0), 0);
+    const spend = (bs.biq_ad_spend_daily || []).reduce((s, a) => s + parseFloat(a.cost || 0), 0);
+    const clicks = (bs.biq_ad_spend_daily || []).reduce((s, a) => s + (a.clicks || 0), 0);
+    const impressions = (bs.biq_ad_spend_daily || []).reduce((s, a) => s + (a.impressions || 0), 0);
+
+    // Per-market: combine revenue (market_perf) + spend/clicks/impressions (ad_spend)
+    const mkt = {};
+    for (const m of (bs.biq_market_perf_daily || [])) {
+      const k = m.market || 'ALL';
+      if (!mkt[k]) mkt[k] = { market: k, revenue: 0, orders: 0, units: 0, spend: 0, clicks: 0, impressions: 0 };
+      mkt[k].revenue += parseFloat(m.revenue || 0);
+      mkt[k].orders += (m.orders || 0);
+      mkt[k].units += (m.units || 0);
+    }
+    for (const a of (bs.biq_ad_spend_daily || [])) {
+      const k = a.market || 'ALL';
+      if (!mkt[k]) mkt[k] = { market: k, revenue: 0, orders: 0, units: 0, spend: 0, clicks: 0, impressions: 0 };
+      mkt[k].spend += parseFloat(a.cost || 0);
+      mkt[k].clicks += (a.clicks || 0);
+      mkt[k].impressions += (a.impressions || 0);
+    }
+    const markets = Object.values(mkt).map(m => ({
+      ...m,
+      roas: m.spend > 0 ? m.revenue / m.spend : null,
+      ctr: m.impressions > 0 ? (m.clicks / m.impressions) * 100 : null,
+    })).sort((a, b) => b.revenue - a.revenue);
+
+    bs.rollup = {
+      revenue, orders, units, spend, clicks, impressions,
+      roas: spend > 0 ? revenue / spend : null,
+      ctr: impressions > 0 ? (clicks / impressions) * 100 : null,
+      markets,
+    };
+  }
+
+  res.json(data);
+});
+
+// ── POST /api/batches — create a new batch ─────────────────────────────────
+router.post('/', async (req, res) => {
+  const { name, source, thesis, validation_notes, tags, batch_tag, sub_tags, changes, changes_note, store_links, start_date, stage } = req.body;
+
+  if (!name) return res.status(400).json({ error: 'name is required' });
+
+  const batch_code = await generateBatchCode();
+
+  const { data, error } = await supabase
+    .from('biq_batches')
+    .insert({
+      batch_code,
+      batch_tag: batch_tag || null,
+      name, source, thesis, validation_notes,
+      tags: tags || [],
+      sub_tags: sub_tags || [],
+      changes: changes || [],
+      changes_note: changes_note || null,
+      start_date: start_date || null,
+      stage: stage || 'draft',
+    })
+    .select()
+    .single();
+
+  if (error) return res.status(500).json({ error: error.message });
+
+  // Link selected stores (store_links = [{ store_id, shopify_tag? }])
+  let linkedCount = 0;
+  if (Array.isArray(store_links) && store_links.length > 0) {
+    const rows = store_links
+      .filter(l => l.store_id)
+      .map(l => ({ batch_id: data.id, store_id: l.store_id, shopify_tag: l.shopify_tag || null }));
+    if (rows.length > 0) {
+      const { error: linkErr } = await supabase.from('biq_batch_stores').insert(rows);
+      if (linkErr) console.error('Store link error:', linkErr.message);
+      else linkedCount = rows.length;
+    }
+  }
+
+  // Auto-linking process: if no stores were explicitly linked, scan all stores
+  // and link the ones that actually carry this batch's tag (with product counts).
+  let autoLinked = null;
+  if (linkedCount === 0) {
+    try {
+      const { autoLinkBatch } = require('./batchLink');
+      const r = await autoLinkBatch(data.id);
+      autoLinked = r.linked.filter(l => !l.error);
+      linkedCount = autoLinked.length;
+    } catch (err) {
+      console.error('Auto-link error:', err.message);
+    }
+  }
+
+  await logActivity('batch', 'success', `Batch "${data.name}" created${linkedCount ? ` and linked to ${linkedCount} store(s)` : ''}`, { batch_id: data.id, tag: data.batch_tag });
+
+  res.status(201).json({ ...data, auto_linked: autoLinked });
+});
+
+// ── GET /api/batches/suggest-name — suggest next name from last batch ──────
+router.get('/suggest-name', async (req, res) => {
+  const { data } = await supabase
+    .from('biq_batches')
+    .select('name, batch_tag, created_at')
+    .order('created_at', { ascending: false })
+    .limit(1);
+
+  const last = data?.[0];
+  if (!last) return res.json({ suggested_name: '', suggested_tag: '' });
+
+  // Find trailing number in name or tag and increment
+  const bump = (str) => {
+    if (!str) return '';
+    const m = str.match(/^(.*?)(\d+)(\D*)$/);
+    if (m) return `${m[1]}${parseInt(m[2]) + 1}${m[3]}`;
+    return ''; // no number to increment — leave blank so user names freely
+  };
+
+  res.json({
+    suggested_name: bump(last.name),
+    suggested_tag: bump(last.batch_tag),
+    last_name: last.name,
+    last_tag: last.batch_tag,
+  });
+});
+
+// ── PATCH /api/batches/:id — update batch metadata ─────────────────────────
+router.patch('/:id', async (req, res) => {
+  const { name, source, thesis, validation_notes, tags, status, batch_tag, sub_tags, changes, changes_note, start_date, stage, go_live_date, auto_publish } = req.body;
+
+  const update = {};
+  for (const [k, v] of Object.entries({ name, source, thesis, validation_notes, tags, status, batch_tag, sub_tags, changes, changes_note, start_date, stage, go_live_date, auto_publish })) {
+    if (v !== undefined) update[k] = v;
+  }
+
+  const { data, error } = await supabase
+    .from('biq_batches')
+    .update(update)
+    .eq('id', req.params.id)
+    .select()
+    .single();
+
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// ── DELETE /api/batches/:id — archive (default) or hard delete (?hard=true) ─
+router.delete('/:id', async (req, res) => {
+  const hard = req.query.hard === 'true';
+
+  if (hard) {
+    const { error } = await supabase.from('biq_batches').delete().eq('id', req.params.id);
+    if (error) return res.status(500).json({ error: error.message });
+    return res.json({ success: true, deleted: true });
+  }
+
+  const { error } = await supabase
+    .from('biq_batches')
+    .update({ status: 'archived' })
+    .eq('id', req.params.id);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ success: true });
+});
+
+// ── GET /api/batches/:id/suggest-tag?store_id=... — auto-suggest store sub-tag
+router.get('/:id/suggest-tag', async (req, res) => {
+  const { store_id } = req.query;
+  if (!store_id) return res.status(400).json({ error: 'store_id required' });
+
+  const [{ data: batch }, { data: store }] = await Promise.all([
+    supabase.from('biq_batches').select('batch_tag').eq('id', req.params.id).single(),
+    supabase.from('biq_stores').select('country, name').eq('id', store_id).single(),
+  ]);
+
+  if (!batch) return res.status(404).json({ error: 'Batch not found' });
+
+  const parentTag = batch.batch_tag || '';
+  const country = (store?.country || '').toLowerCase().slice(0, 2); // fi, fr, uk, pl...
+
+  // Suggest: parent tag + country code, or just parent tag if no country
+  const suggested = parentTag
+    ? country ? `${parentTag}-${country}` : parentTag
+    : '';
+
+  res.json({ suggested, parent_tag: parentTag, country_code: country });
+});
+
+// ── POST /api/batches/:id/stores — add a store assignment ─────────────────
+router.post('/:id/stores', async (req, res) => {
+  const { store_id, shopify_tag, notes } = req.body;
+
+  if (!store_id)
+    return res.status(400).json({ error: 'store_id is required' });
+
+  const { data, error } = await supabase
+    .from('biq_batch_stores')
+    .insert({ batch_id: req.params.id, store_id, shopify_tag: shopify_tag || null, notes: notes || null })
+    .select(`
+      id, shopify_tag, notes,
+      biq_stores ( id, name, shop_domain, country )
+    `)
+    .single();
+
+  if (error) return res.status(500).json({ error: error.message });
+  res.status(201).json(data);
+});
+
+// ── PATCH /api/batches/:batchId/stores/:bsId — update store assignment ─────
+router.patch('/:batchId/stores/:bsId', async (req, res) => {
+  const { shopify_tag, notes } = req.body;
+  const update = {};
+  if (shopify_tag !== undefined) update.shopify_tag = shopify_tag || null;
+  if (notes !== undefined) update.notes = notes;
+
+  const { data, error } = await supabase
+    .from('biq_batch_stores')
+    .update(update)
+    .eq('id', req.params.bsId)
+    .eq('batch_id', req.params.batchId)
+    .select()
+    .single();
+
+  if (error) return res.status(500).json({ error: error.message });
+  res.json(data);
+});
+
+// ── DELETE /api/batches/:batchId/stores/:bsId — remove store from batch ────
+router.delete('/:batchId/stores/:bsId', async (req, res) => {
+  const { error } = await supabase
+    .from('biq_batch_stores')
+    .delete()
+    .eq('id', req.params.bsId)
+    .eq('batch_id', req.params.batchId);
+
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ success: true });
+});
+
+// ── GET /api/batches/:id/diagnostics — deep per-store data health check ─────
+// Shows exactly what data exists at each stage so gaps are easy to spot.
+router.get('/:id/diagnostics', async (req, res) => {
+  const { data: batch, error } = await supabase
+    .from('biq_batches')
+    .select(`
+      id, name, batch_tag,
+      biq_batch_stores (
+        id, shopify_tag, product_count, product_count_active, product_count_draft, product_count_archived,
+        biq_stores ( id, name, shop_domain, currency, markets, gads_customer_id, gads_refresh_token, gads_ok, shopify_ok ),
+        biq_performance_daily ( date, revenue, orders, units_sold ),
+        biq_ad_spend_daily ( date, market, cost, clicks, impressions ),
+        biq_market_perf_daily ( date, market, revenue, orders, units )
+      )
+    `)
+    .eq('id', req.params.id)
+    .single();
+
+  if (error || !batch) return res.status(404).json({ error: 'Batch not found' });
+
+  const stores = (batch.biq_batch_stores || []).map(bs => {
+    const st = bs.biq_stores || {};
+    const perf = bs.biq_performance_daily || [];
+    const ads = bs.biq_ad_spend_daily || [];
+    const mkt = bs.biq_market_perf_daily || [];
+
+    const perfDates = [...new Set(perf.map(p => p.date))].sort();
+    const adsDates = [...new Set(ads.map(a => a.date))].sort();
+    const adMarkets = [...new Set(ads.map(a => a.market))];
+    const revMarkets = [...new Set(mkt.map(m => m.market))];
+    const totalRev = perf.reduce((s, p) => s + parseFloat(p.revenue || 0), 0);
+    const totalSpend = ads.reduce((s, a) => s + parseFloat(a.cost || 0), 0);
+    const totalImpr = ads.reduce((s, a) => s + (a.impressions || 0), 0);
+
+    // Identify gaps
+    const issues = [];
+    if (!st.shopify_ok) issues.push('Shopify not verified (sync to verify)');
+    if (!st.gads_refresh_token) issues.push('Google Ads not connected');
+    else if (!st.gads_customer_id) issues.push('No Google Ads account selected');
+    else if (st.gads_ok === false) issues.push('Last Google Ads query failed');
+    if (!st.markets || st.markets.length === 0) issues.push('No markets configured on store');
+    if (perf.length === 0) issues.push('No Shopify performance data (no orders matched, or not synced)');
+    if (ads.length === 0 && st.gads_customer_id) issues.push('No ad-spend rows (Google Ads returned nothing for these products)');
+    if (totalImpr === 0 && ads.length > 0) issues.push('Ad spend present but 0 impressions (CTR will be blank)');
+    const adMarketsNoGeo = adMarkets.length === 1 && adMarkets[0] === 'ALL';
+    if (adMarketsNoGeo) issues.push('Ad spend not split by country (all under ALL) — geo data unavailable');
+    const mismatchMarkets = revMarkets.filter(m => !adMarkets.includes(m) && m !== 'ALL');
+    if (mismatchMarkets.length > 0 && ads.length > 0) issues.push(`Revenue markets without matching spend: ${mismatchMarkets.join(', ')}`);
+
+    return {
+      store: st.name,
+      shop_domain: st.shop_domain,
+      currency: st.currency,
+      tag: bs.shopify_tag || batch.batch_tag || batch.name,
+      integration: {
+        shopify_ok: st.shopify_ok ?? null,
+        gads_connected: !!st.gads_refresh_token,
+        gads_account: st.gads_customer_id || null,
+        gads_ok: st.gads_ok ?? null,
+      },
+      products: {
+        total: bs.product_count || 0,
+        active: bs.product_count_active || 0,
+        draft: bs.product_count_draft || 0,
+        archived: bs.product_count_archived || 0,
+      },
+      store_markets: st.markets || [],
+      shopify_performance: {
+        days_with_data: perfDates.length,
+        date_range: perfDates.length ? `${perfDates[0]} → ${perfDates[perfDates.length - 1]}` : null,
+        total_revenue: Number(totalRev.toFixed(2)),
+      },
+      ad_spend: {
+        rows: ads.length,
+        days_with_data: adsDates.length,
+        markets: adMarkets,
+        total_spend: Number(totalSpend.toFixed(2)),
+        total_impressions: totalImpr,
+      },
+      market_revenue: {
+        rows: mkt.length,
+        markets: revMarkets,
+      },
+      issues,
+    };
+  });
+
+  // Overall summary
+  const allIssues = stores.flatMap(s => s.issues);
+  res.json({
+    batch: batch.name,
+    store_count: stores.length,
+    total_issues: allIssues.length,
+    stores,
+  });
+});
+
+// ── VA review: toggle a store's "checked" state ─────────────────────────────
+router.patch('/:batchId/stores/:bsId/check', async (req, res) => {
+  const checked = !!req.body.checked;
+  const { data, error } = await supabase.from('biq_batch_stores')
+    .update({ va_checked: checked, va_checked_at: checked ? new Date().toISOString() : null })
+    .eq('id', req.params.bsId).eq('batch_id', req.params.batchId)
+    .select('id, va_checked, va_checked_at').single();
+  if (error) return res.status(500).json({ error: error.message });
+
+  // Recompute batch-level progress
+  const { data: all } = await supabase.from('biq_batch_stores')
+    .select('va_checked').eq('batch_id', req.params.batchId);
+  const total = all?.length || 0;
+  const done = (all || []).filter(s => s.va_checked).length;
+  res.json({ store: data, progress: { done, total, all_checked: total > 0 && done === total } });
+});
+
+// ── VA review: save a store's note ──────────────────────────────────────────
+router.patch('/:batchId/stores/:bsId/note', async (req, res) => {
+  const { error } = await supabase.from('biq_batch_stores')
+    .update({ va_note: req.body.note ?? null })
+    .eq('id', req.params.bsId).eq('batch_id', req.params.batchId);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ success: true });
+});
+
+// ── VA review: save the batch-level general note ────────────────────────────
+router.patch('/:batchId/note', async (req, res) => {
+  const { error } = await supabase.from('biq_batches')
+    .update({ va_general_note: req.body.note ?? null })
+    .eq('id', req.params.batchId);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ success: true });
+});
+
+// ── VA review: AI-summarize all per-store notes into one overview ───────────
+router.post('/:batchId/summarize-notes', async (req, res) => {
+  const { data: batch } = await supabase.from('biq_batches')
+    .select(`name, va_general_note, biq_batch_stores ( va_note, biq_stores ( name ) )`)
+    .eq('id', req.params.batchId).single();
+  if (!batch) return res.status(404).json({ error: 'Batch not found' });
+
+  const notes = (batch.biq_batch_stores || [])
+    .filter(bs => bs.va_note && bs.va_note.trim())
+    .map(bs => `${bs.biq_stores?.name || 'Store'}: ${bs.va_note.trim()}`);
+
+  if (notes.length === 0 && !batch.va_general_note) {
+    return res.json({ summary: 'No notes to summarize yet.' });
+  }
+
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  // Graceful fallback: if no API key, just concatenate the notes cleanly.
+  if (!apiKey) {
+    const fallback = [
+      batch.va_general_note ? `General: ${batch.va_general_note.trim()}` : null,
+      ...notes,
+    ].filter(Boolean).join('\n');
+    await supabase.from('biq_batches').update({ va_note_summary: fallback }).eq('id', req.params.batchId);
+    return res.json({ summary: fallback, ai: false });
+  }
+
+  try {
+    const prompt = `You are summarizing QA notes from virtual assistants who checked product listings across stores for a batch named "${batch.name}".${batch.va_general_note ? `\n\nGeneral note: ${batch.va_general_note.trim()}` : ''}\n\nPer-store notes:\n${notes.join('\n')}\n\nWrite a concise summary (max 6 short bullet points) grouping common issues, flagging anything store-specific, and noting how many stores reported problems. Be direct and practical.`;
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 600, messages: [{ role: 'user', content: prompt }] }),
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error?.message || `API ${r.status}`);
+    const summary = (j.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
+    await supabase.from('biq_batches').update({ va_note_summary: summary }).eq('id', req.params.batchId);
+    res.json({ summary, ai: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Go-live: preview how many draft products would publish ──────────────────
+router.get('/:id/publish-preview', async (req, res) => {
+  const { previewPublish } = require('./publish');
+  try { res.json(await previewPublish(req.params.id)); }
+  catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Go-live: publish now (manual trigger) ───────────────────────────────────
+router.post('/:id/publish', async (req, res) => {
+  const { publishBatch } = require('./publish');
+  try { res.json(await publishBatch(req.params.id, { trigger: 'manual' })); }
+  catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Auto-link a batch to all stores that carry its tag ──────────────────────
+router.post('/:id/auto-link', async (req, res) => {
+  const { autoLinkBatch } = require('./batchLink');
+  try { res.json(await autoLinkBatch(req.params.id)); }
+  catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Discover batches: scan store tags matching the detection rule ───────────
+router.get('/discover/scan', async (req, res) => {
+  const { discoverBatches } = require('./batchLink');
+  try { res.json(await discoverBatches()); }
+  catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Create batches from discovered tags ─────────────────────────────────────
+// grouped mode: body { mode:'grouped', tags:[...] } — same tag across stores = 1 batch
+// per_store mode: body { mode:'per_store', items:[{tag, store_id}] } — each = own batch
+router.post('/discover/create', async (req, res) => {
+  const { createBatchesFromTags, createBatchesPerStore } = require('./batchLink');
+  const mode = req.body.mode === 'grouped' ? 'grouped' : 'per_store';
+  try {
+    if (mode === 'per_store') {
+      const items = Array.isArray(req.body.items) ? req.body.items : [];
+      if (items.length === 0) return res.status(400).json({ error: 'No items provided' });
+      return res.json(await createBatchesPerStore(items));
+    }
+    const tags = Array.isArray(req.body.tags) ? req.body.tags : [];
+    if (tags.length === 0) return res.status(400).json({ error: 'No tags provided' });
+    res.json(await createBatchesFromTags(tags));
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+module.exports = router;
