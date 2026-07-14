@@ -327,6 +327,8 @@ function EditStoreModal({ store, onClose, onSaved }) {
     currency: store.currency || 'EUR',
     markets: (store.markets || []).join(', '),
     gads_customer_id: store.gads_customer_id || '',
+    merchant_id: store.merchant_id || '',
+    mc_supplemental_feed_id: store.mc_supplemental_feed_id || '',
     client_id: '',
     client_secret: '',
   });
@@ -362,6 +364,8 @@ function EditStoreModal({ store, onClose, onSaved }) {
       if (form.shop_domain.trim() !== store.shop_domain) body.shop_domain = form.shop_domain.trim();
       if (form.client_id.trim()) body.client_id = form.client_id.trim();
       if (form.client_secret.trim()) body.client_secret = form.client_secret.trim();
+      body.merchant_id = form.merchant_id.replace(/\D/g, '') || null;
+      body.mc_supplemental_feed_id = form.mc_supplemental_feed_id.trim() || null;
       const updated = await api.patch(`/api/stores/${store.id}`, body);
       // Save Google Ads account id separately
       const gadsId = form.gads_customer_id.replace(/\D/g, '');
@@ -441,6 +445,14 @@ function EditStoreModal({ store, onClose, onSaved }) {
             <div style={{ fontSize: 10.5, color: 'var(--t3)', marginTop: 4 }}>Spend &amp; ROAS pull from this account on each sync.</div>
             {gadsErr && <div style={{ fontSize: 10.5, color: 'var(--red)', marginTop: 4 }}>{gadsErr}</div>}
           </div>
+
+          <div style={{ height: 1, background: 'var(--b1)', margin: '2px 0' }} />
+          <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--t2)' }}>Merchant Center <span style={{ fontWeight: 500, color: 'var(--t3)' }}>(for custom-label batch tracking)</span></div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div><Label>Merchant Center ID</Label><input placeholder="digits only" value={form.merchant_id} onChange={set('merchant_id')} style={{ fontFamily: "'Fira Code', monospace", fontSize: 12 }} /></div>
+            <div><Label>Supplemental feed ID</Label><input placeholder="from Merchant Center" value={form.mc_supplemental_feed_id} onChange={set('mc_supplemental_feed_id')} style={{ fontFamily: "'Fira Code', monospace", fontSize: 12 }} /></div>
+          </div>
+          <div style={{ fontSize: 10.5, color: 'var(--t3)' }}>Create a supplemental feed in Merchant Center (Products → Feeds → Supplemental, source = "Content API"), then paste its ID here. BatchIQ writes batch labels into it without touching your Simprosys feed.</div>
 
           <div style={{ height: 1, background: 'var(--b1)', margin: '2px 0' }} />
           <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--t2)' }}>App credentials <span style={{ fontWeight: 500, color: 'var(--t3)' }}>(leave empty to keep current)</span></div>

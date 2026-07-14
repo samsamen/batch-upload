@@ -124,3 +124,45 @@ ALTER TABLE biq_batches ADD COLUMN IF NOT EXISTS start_date DATE;
 -- Lifecycle stage set by the user (Draft / In Progress / Live), separate from
 -- the active/paused/archived status used for filtering & archiving.
 ALTER TABLE biq_batches ADD COLUMN IF NOT EXISTS stage TEXT DEFAULT 'draft';
+
+-- ── Google Content API (custom-label tracking via supplemental feed) ─────────
+-- Per store: its Merchant Center id + the supplemental feed id (created once in
+-- the Merchant Center UI with source "Content API").
+ALTER TABLE biq_stores ADD COLUMN IF NOT EXISTS merchant_id TEXT;
+ALTER TABLE biq_stores ADD COLUMN IF NOT EXISTS mc_supplemental_feed_id TEXT;
+ALTER TABLE biq_stores ADD COLUMN IF NOT EXISTS content_api_ok BOOLEAN DEFAULT NULL;
+ALTER TABLE biq_stores ADD COLUMN IF NOT EXISTS content_api_checked_at TIMESTAMPTZ;
+
+-- Per batch: which custom label slot (0-4) and value identify this batch in the
+-- Google feed. label_value defaults to a stable code derived from the batch.
+ALTER TABLE biq_batches ADD COLUMN IF NOT EXISTS gads_label_index SMALLINT DEFAULT 4;
+ALTER TABLE biq_batches ADD COLUMN IF NOT EXISTS gads_label_value TEXT;
+ALTER TABLE biq_batches ADD COLUMN IF NOT EXISTS labels_pushed_at TIMESTAMPTZ;
+
+-- ── VA review workflow (per-store check + notes) ────────────────────────────
+ALTER TABLE biq_batch_stores ADD COLUMN IF NOT EXISTS va_checked BOOLEAN DEFAULT false;
+ALTER TABLE biq_batch_stores ADD COLUMN IF NOT EXISTS va_checked_at TIMESTAMPTZ;
+ALTER TABLE biq_batch_stores ADD COLUMN IF NOT EXISTS va_note TEXT;
+ALTER TABLE biq_batches ADD COLUMN IF NOT EXISTS va_general_note TEXT;
+ALTER TABLE biq_batches ADD COLUMN IF NOT EXISTS va_note_summary TEXT;
+
+-- ── Per-store listing guidance (always-visible info: sizes run large, regions to
+-- exclude, words to avoid, etc.). Persists across batches.
+ALTER TABLE biq_stores ADD COLUMN IF NOT EXISTS listing_guidance TEXT;
+
+-- ── Scheduled go-live (auto-publish a batch's draft products on a date) ──────
+ALTER TABLE biq_batches ADD COLUMN IF NOT EXISTS go_live_date DATE;
+ALTER TABLE biq_batches ADD COLUMN IF NOT EXISTS auto_publish BOOLEAN DEFAULT true;
+ALTER TABLE biq_batches ADD COLUMN IF NOT EXISTS published_at TIMESTAMPTZ;
+ALTER TABLE biq_batch_stores ADD COLUMN IF NOT EXISTS published_at TIMESTAMPTZ;
+ALTER TABLE biq_batch_stores ADD COLUMN IF NOT EXISTS published_count INT DEFAULT 0;
+
+-- ── Batch auto-detection rule (which Shopify tags count as a batch) ──────────
+ALTER TABLE biq_config ADD COLUMN IF NOT EXISTS batch_tag_match TEXT DEFAULT 'contains';   -- startswith | contains | exact
+ALTER TABLE biq_config ADD COLUMN IF NOT EXISTS batch_tag_pattern TEXT DEFAULT 'BATCH';
+
+-- ── Batch discovery mode: per_store (each store its own batch) or grouped ────
+ALTER TABLE biq_config ADD COLUMN IF NOT EXISTS batch_link_mode TEXT DEFAULT 'per_store';
+
+-- ── Daily auto-discovery of new batches (opt-in) ─────────────────────────────
+ALTER TABLE biq_config ADD COLUMN IF NOT EXISTS auto_discover BOOLEAN DEFAULT false;

@@ -44,10 +44,10 @@ router.get('/', async (req, res) => {
   const { data: batches, error } = await supabase
     .from('biq_batches')
     .select(`
-      id, batch_code, batch_tag, name, source, thesis, validation_notes, tags, sub_tags, changes, changes_note, status, stage, created_at, start_date,
+      id, batch_code, batch_tag, name, source, thesis, validation_notes, tags, sub_tags, changes, changes_note, status, stage, created_at, start_date, va_general_note, va_note_summary,
       biq_batch_stores (
-        id, shopify_tag, product_count, product_count_active, product_count_draft, product_count_archived, notes,
-        biq_stores ( id, name, shop_domain, country, currency, markets ),
+        id, shopify_tag, product_count, product_count_active, product_count_draft, product_count_archived, notes, va_checked, va_checked_at, va_note,
+        biq_stores ( id, name, shop_domain, country, currency, markets, listing_guidance ),
         biq_performance_daily ( date, orders, revenue, units_sold ),
         biq_ad_spend_daily ( date, cost, clicks, impressions )
       )
@@ -120,10 +120,10 @@ router.get('/:id', async (req, res) => {
   const { data, error } = await supabase
     .from('biq_batches')
     .select(`
-      id, batch_code, batch_tag, name, source, thesis, validation_notes, tags, sub_tags, changes, changes_note, status, stage, created_at, start_date,
+      id, batch_code, batch_tag, name, source, thesis, validation_notes, tags, sub_tags, changes, changes_note, status, stage, created_at, start_date, va_general_note, va_note_summary, gads_label_index, gads_label_value, labels_pushed_at, go_live_date, auto_publish, published_at,
       biq_batch_stores (
-        id, shopify_tag, product_count, product_count_active, product_count_draft, product_count_archived, notes, added_at,
-        biq_stores ( id, name, shop_domain, country, currency, markets, gads_customer_id ),
+        id, shopify_tag, product_count, product_count_active, product_count_draft, product_count_archived, notes, added_at, va_checked, va_checked_at, va_note,
+        biq_stores ( id, name, shop_domain, country, currency, markets, gads_customer_id, listing_guidance ),
         biq_performance_daily ( date, orders, revenue, units_sold ),
         biq_ad_spend_daily ( date, market, cost, conversions, conversion_value, clicks, impressions ),
         biq_market_perf_daily ( date, market, revenue, orders, units )
@@ -223,9 +223,23 @@ router.post('/', async (req, res) => {
     }
   }
 
+  // Auto-linking process: if no stores were explicitly linked, scan all stores
+  // and link the ones that actually carry this batch's tag (with product counts).
+  let autoLinked = null;
+  if (linkedCount === 0) {
+    try {
+      const { autoLinkBatch } = require('./batchLink');
+      const r = await autoLinkBatch(data.id);
+      autoLinked = r.linked.filter(l => !l.error);
+      linkedCount = autoLinked.length;
+    } catch (err) {
+      console.error('Auto-link error:', err.message);
+    }
+  }
+
   await logActivity('batch', 'success', `Batch "${data.name}" created${linkedCount ? ` and linked to ${linkedCount} store(s)` : ''}`, { batch_id: data.id, tag: data.batch_tag });
 
-  res.status(201).json(data);
+  res.status(201).json({ ...data, auto_linked: autoLinked });
 });
 
 // ── GET /api/batches/suggest-name — suggest next name from last batch ──────
@@ -257,10 +271,10 @@ router.get('/suggest-name', async (req, res) => {
 
 // ── PATCH /api/batches/:id — update batch metadata ─────────────────────────
 router.patch('/:id', async (req, res) => {
-  const { name, source, thesis, validation_notes, tags, status, batch_tag, sub_tags, changes, changes_note, start_date, stage } = req.body;
+  const { name, source, thesis, validation_notes, tags, status, batch_tag, sub_tags, changes, changes_note, start_date, stage, go_live_date, auto_publish } = req.body;
 
   const update = {};
-  for (const [k, v] of Object.entries({ name, source, thesis, validation_notes, tags, status, batch_tag, sub_tags, changes, changes_note, start_date, stage })) {
+  for (const [k, v] of Object.entries({ name, source, thesis, validation_notes, tags, status, batch_tag, sub_tags, changes, changes_note, start_date, stage, go_live_date, auto_publish })) {
     if (v !== undefined) update[k] = v;
   }
 
@@ -462,6 +476,130 @@ router.get('/:id/diagnostics', async (req, res) => {
     total_issues: allIssues.length,
     stores,
   });
+});
+
+// ── VA review: toggle a store's "checked" state ─────────────────────────────
+router.patch('/:batchId/stores/:bsId/check', async (req, res) => {
+  const checked = !!req.body.checked;
+  const { data, error } = await supabase.from('biq_batch_stores')
+    .update({ va_checked: checked, va_checked_at: checked ? new Date().toISOString() : null })
+    .eq('id', req.params.bsId).eq('batch_id', req.params.batchId)
+    .select('id, va_checked, va_checked_at').single();
+  if (error) return res.status(500).json({ error: error.message });
+
+  // Recompute batch-level progress
+  const { data: all } = await supabase.from('biq_batch_stores')
+    .select('va_checked').eq('batch_id', req.params.batchId);
+  const total = all?.length || 0;
+  const done = (all || []).filter(s => s.va_checked).length;
+  res.json({ store: data, progress: { done, total, all_checked: total > 0 && done === total } });
+});
+
+// ── VA review: save a store's note ──────────────────────────────────────────
+router.patch('/:batchId/stores/:bsId/note', async (req, res) => {
+  const { error } = await supabase.from('biq_batch_stores')
+    .update({ va_note: req.body.note ?? null })
+    .eq('id', req.params.bsId).eq('batch_id', req.params.batchId);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ success: true });
+});
+
+// ── VA review: save the batch-level general note ────────────────────────────
+router.patch('/:batchId/note', async (req, res) => {
+  const { error } = await supabase.from('biq_batches')
+    .update({ va_general_note: req.body.note ?? null })
+    .eq('id', req.params.batchId);
+  if (error) return res.status(500).json({ error: error.message });
+  res.json({ success: true });
+});
+
+// ── VA review: AI-summarize all per-store notes into one overview ───────────
+router.post('/:batchId/summarize-notes', async (req, res) => {
+  const { data: batch } = await supabase.from('biq_batches')
+    .select(`name, va_general_note, biq_batch_stores ( va_note, biq_stores ( name ) )`)
+    .eq('id', req.params.batchId).single();
+  if (!batch) return res.status(404).json({ error: 'Batch not found' });
+
+  const notes = (batch.biq_batch_stores || [])
+    .filter(bs => bs.va_note && bs.va_note.trim())
+    .map(bs => `${bs.biq_stores?.name || 'Store'}: ${bs.va_note.trim()}`);
+
+  if (notes.length === 0 && !batch.va_general_note) {
+    return res.json({ summary: 'No notes to summarize yet.' });
+  }
+
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  // Graceful fallback: if no API key, just concatenate the notes cleanly.
+  if (!apiKey) {
+    const fallback = [
+      batch.va_general_note ? `General: ${batch.va_general_note.trim()}` : null,
+      ...notes,
+    ].filter(Boolean).join('\n');
+    await supabase.from('biq_batches').update({ va_note_summary: fallback }).eq('id', req.params.batchId);
+    return res.json({ summary: fallback, ai: false });
+  }
+
+  try {
+    const prompt = `You are summarizing QA notes from virtual assistants who checked product listings across stores for a batch named "${batch.name}".${batch.va_general_note ? `\n\nGeneral note: ${batch.va_general_note.trim()}` : ''}\n\nPer-store notes:\n${notes.join('\n')}\n\nWrite a concise summary (max 6 short bullet points) grouping common issues, flagging anything store-specific, and noting how many stores reported problems. Be direct and practical.`;
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 600, messages: [{ role: 'user', content: prompt }] }),
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error?.message || `API ${r.status}`);
+    const summary = (j.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
+    await supabase.from('biq_batches').update({ va_note_summary: summary }).eq('id', req.params.batchId);
+    res.json({ summary, ai: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Go-live: preview how many draft products would publish ──────────────────
+router.get('/:id/publish-preview', async (req, res) => {
+  const { previewPublish } = require('./publish');
+  try { res.json(await previewPublish(req.params.id)); }
+  catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Go-live: publish now (manual trigger) ───────────────────────────────────
+router.post('/:id/publish', async (req, res) => {
+  const { publishBatch } = require('./publish');
+  try { res.json(await publishBatch(req.params.id, { trigger: 'manual' })); }
+  catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Auto-link a batch to all stores that carry its tag ──────────────────────
+router.post('/:id/auto-link', async (req, res) => {
+  const { autoLinkBatch } = require('./batchLink');
+  try { res.json(await autoLinkBatch(req.params.id)); }
+  catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Discover batches: scan store tags matching the detection rule ───────────
+router.get('/discover/scan', async (req, res) => {
+  const { discoverBatches } = require('./batchLink');
+  try { res.json(await discoverBatches()); }
+  catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Create batches from discovered tags ─────────────────────────────────────
+// grouped mode: body { mode:'grouped', tags:[...] } — same tag across stores = 1 batch
+// per_store mode: body { mode:'per_store', items:[{tag, store_id}] } — each = own batch
+router.post('/discover/create', async (req, res) => {
+  const { createBatchesFromTags, createBatchesPerStore } = require('./batchLink');
+  const mode = req.body.mode === 'grouped' ? 'grouped' : 'per_store';
+  try {
+    if (mode === 'per_store') {
+      const items = Array.isArray(req.body.items) ? req.body.items : [];
+      if (items.length === 0) return res.status(400).json({ error: 'No items provided' });
+      return res.json(await createBatchesPerStore(items));
+    }
+    const tags = Array.isArray(req.body.tags) ? req.body.tags : [];
+    if (tags.length === 0) return res.status(400).json({ error: 'No tags provided' });
+    res.json(await createBatchesFromTags(tags));
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 module.exports = router;

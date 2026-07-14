@@ -71,6 +71,68 @@ async function getProductsByTag(store, tag) {
   return ids;
 }
 
+// List the shop's product tags (top-level productTags connection, up to 250).
+async function listProductTags(store, first = 250) {
+  const query = `query($n: Int!) { productTags(first: $n) { edges { node } } }`;
+  try {
+    const data = await shopifyGraphQL(store, query, { n: first });
+    return (data.productTags?.edges || []).map(e => e.node).filter(Boolean);
+  } catch (err) {
+    // Fallback to the older shop.productTags shape if the top-level isn't available
+    try {
+      const q2 = `query($n: Int!) { shop { productTags(first: $n) { edges { node } } } }`;
+      const d2 = await shopifyGraphQL(store, q2, { n: first });
+      return (d2.shop?.productTags?.edges || []).map(e => e.node).filter(Boolean);
+    } catch { throw err; }
+  }
+}
+async function getDraftProductGidsByTag(store, tag) {
+  const gids = [];
+  let cursor = null, hasNext = true;
+  const searchQuery = `tag:'${String(tag).replace(/'/g, "\\'")}' status:draft`;
+  while (hasNext) {
+    const query = `
+      query($q: String!, $cursor: String) {
+        products(first: 250, query: $q, after: $cursor) {
+          pageInfo { hasNextPage endCursor }
+          nodes { id status }
+        }
+      }`;
+    const data = await shopifyGraphQL(store, query, { q: searchQuery, cursor });
+    const conn = data.products;
+    for (const n of (conn.nodes || [])) {
+      if (String(n.status || '').toLowerCase() === 'draft') gids.push(n.id);
+    }
+    hasNext = conn.pageInfo.hasNextPage;
+    cursor = conn.pageInfo.endCursor;
+  }
+  return gids;
+}
+
+// Set products ACTIVE (publish). Returns { published, errors:[] }. Batched to be gentle.
+async function publishProducts(store, gids) {
+  let published = 0;
+  const errors = [];
+  for (const gid of gids) {
+    const mutation = `
+      mutation($input: ProductInput!) {
+        productUpdate(input: $input) {
+          product { id status }
+          userErrors { field message }
+        }
+      }`;
+    try {
+      const data = await shopifyGraphQL(store, mutation, { input: { id: gid, status: 'ACTIVE' } });
+      const ue = data.productUpdate?.userErrors || [];
+      if (ue.length) errors.push({ gid, message: ue[0].message });
+      else published++;
+    } catch (err) {
+      errors.push({ gid, message: err.message });
+    }
+  }
+  return { published, errors };
+}
+
 // Get orders for a date range, with line items + product ids, fully paginated.
 async function getOrdersForRange(store, fromDate, toDate) {
   const orders = [];
@@ -143,4 +205,4 @@ function calcPerformance(productIds, orders) {
   return { orders: totalOrders, revenue: totalRevenue, units: totalUnits };
 }
 
-module.exports = { shopifyGet, shopifyGraphQL, getProductsByTag, getOrdersForRange, calcPerformance };
+module.exports = { shopifyGet, shopifyGraphQL, getProductsByTag, getDraftProductGidsByTag, publishProducts, listProductTags, getOrdersForRange, calcPerformance };

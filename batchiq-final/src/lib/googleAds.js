@@ -169,6 +169,81 @@ async function getSpendByGeo(cfg, accessToken, customerId, fromDate, toDate) {
   return out;
 }
 
+// Spend by CUSTOM LABEL + geo. Custom labels live on the Merchant Center feed
+// (custom_label_0..4) and surface in the API as segments.product_custom_attribute0..4.
+// Unlike product_item_id, these MAY be combinable with geo — this function tries it
+// and the caller can fall back if Google rejects the combination.
+// labelIndex: 0-4, labelValue: the exact custom label string for the batch.
+// Returns { rows, error }: rows = [{ date, geoConstant, cost, clicks, impressions, conversions, conversionValue }]
+async function getSpendByCustomLabelGeo(cfg, accessToken, customerId, labelIndex, labelValue, fromDate, toDate) {
+  const attr = `segments.product_custom_attribute${labelIndex}`;
+  const gaql = `
+    SELECT
+      segments.date,
+      segments.geo_target_country,
+      ${attr},
+      metrics.cost_micros,
+      metrics.conversions,
+      metrics.conversions_value,
+      metrics.clicks,
+      metrics.impressions
+    FROM shopping_performance_view
+    WHERE segments.date BETWEEN '${fromDate}' AND '${toDate}'
+      AND ${attr} = '${String(labelValue).replace(/'/g, "")}'
+  `;
+  try {
+    const rows = await searchStream(cfg, accessToken, customerId, gaql);
+    const out = [];
+    for (const r of rows) {
+      const seg = r.segments || {};
+      const m = r.metrics || {};
+      const geoRaw = seg.geoTargetCountry || '';
+      out.push({
+        date: seg.date,
+        geoConstant: geoRaw ? String(geoRaw).split('/').pop() : null,
+        cost: (parseInt(m.costMicros || '0', 10)) / 1e6,
+        conversions: parseFloat(m.conversions || '0'),
+        conversionValue: parseFloat(m.conversionsValue || '0'),
+        clicks: parseInt(m.clicks || '0', 10),
+        impressions: parseInt(m.impressions || '0', 10),
+      });
+    }
+    return { rows, error: null, geo_combined: true };
+  } catch (errGeo) {
+    // Geo + custom label rejected → retry WITHOUT geo (label-only, still better than nothing)
+    const gaqlNoGeo = `
+      SELECT
+        segments.date,
+        ${attr},
+        metrics.cost_micros,
+        metrics.conversions,
+        metrics.conversions_value,
+        metrics.clicks,
+        metrics.impressions
+      FROM shopping_performance_view
+      WHERE segments.date BETWEEN '${fromDate}' AND '${toDate}'
+        AND ${attr} = '${String(labelValue).replace(/'/g, "")}'
+    `;
+    try {
+      const rows = await searchStream(cfg, accessToken, customerId, gaqlNoGeo);
+      const out = rows.map(r => {
+        const seg = r.segments || {}; const m = r.metrics || {};
+        return {
+          date: seg.date, geoConstant: null,
+          cost: (parseInt(m.costMicros || '0', 10)) / 1e6,
+          conversions: parseFloat(m.conversions || '0'),
+          conversionValue: parseFloat(m.conversionsValue || '0'),
+          clicks: parseInt(m.clicks || '0', 10),
+          impressions: parseInt(m.impressions || '0', 10),
+        };
+      });
+      return { rows: out, error: null, geo_combined: false, geo_error: errGeo.message.slice(0, 200) };
+    } catch (errNoGeo) {
+      return { rows: [], error: errNoGeo.message.slice(0, 300), geo_combined: false };
+    }
+  }
+}
+
 // List accessible customers under the configured credentials (for account picking).
 async function listAccessibleCustomers(cfg, accessToken) {
   const url = `https://googleads.googleapis.com/${GADS_API_VERSION}/customers:listAccessibleCustomers`;
@@ -266,6 +341,7 @@ module.exports = {
   searchStream,
   getSpendByProductAndGeo,
   getSpendByGeo,
+  getSpendByCustomLabelGeo,
   listAccessibleCustomers,
   listAccountsWithNames,
   getAccountCurrency,

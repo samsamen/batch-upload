@@ -23,7 +23,7 @@ app.use(cors({ origin: (origin, cb) => cb(null, true), credentials: true }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-const BUILD_VERSION = 'v3.9-deep-diagnostics';
+const BUILD_VERSION = 'v4.7-daily-autodiscover';
 const BUILD_TIME = new Date().toISOString();
 
 app.get('/health', (req, res) => {
@@ -64,6 +64,22 @@ app.get('*', (req, res) => {
 cron.schedule('0 */3 * * *', async () => {
   console.log('Cron: auto-sync...');
   try { await syncAll(30); } catch (err) { console.error(err.message); }
+});
+
+// Scheduled go-live: every hour, publish any batch whose go-live date has arrived
+const { runScheduledPublishes } = require('./src/routes/publish');
+cron.schedule('15 * * * *', async () => {
+  try { await runScheduledPublishes(); } catch (err) { console.error('Scheduled publish:', err.message); }
+});
+
+// Daily auto-discovery (05:30): find new batch tags per the saved rule, create +
+// link them, then sync immediately so product counts + performance fill in.
+const { runAutoDiscovery } = require('./src/routes/batchLink');
+cron.schedule('30 5 * * *', async () => {
+  try {
+    const r = await runAutoDiscovery();
+    if (r.created > 0) await syncAll(30);
+  } catch (err) { console.error('Auto-discovery:', err.message); }
 });
 
 app.listen(PORT, '0.0.0.0', () => {

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { api, fmtCurrency } from '../api.js';
+import { conventionsForMarkets, hasMixedConventions } from '../lib/sizeConventions.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared rich content for a batch: gold reason, totals (w/ CTR), store cards
@@ -108,12 +109,246 @@ function DiagBox({ title, lines }) {
   );
 }
 
+function SizeWarning({ markets }) {
+  const groups = conventionsForMarkets(markets);
+  if (groups.length === 0) return null;
+  const mixed = hasMixedConventions(markets);
+  return (
+    <div style={{ marginTop: 10, display: 'flex', alignItems: 'flex-start', gap: 8, padding: '8px 11px', borderRadius: 8, background: mixed ? 'rgba(244,63,94,0.08)' : 'rgba(232,184,75,0.08)', border: '1px solid ' + (mixed ? 'rgba(244,63,94,0.3)' : 'rgba(232,184,75,0.3)') }}>
+      <span style={{ flexShrink: 0, marginTop: 1 }}><Warn size={12} /></span>
+      <div style={{ fontSize: 10.5, lineHeight: 1.6 }}>
+        <span style={{ fontWeight: 700, color: mixed ? 'var(--red)' : 'var(--gold)' }}>{mixed ? 'Mixed conventions — check each market:' : 'Market conventions:'}</span>
+        <div style={{ marginTop: 3, display: 'flex', flexDirection: 'column', gap: 2 }}>
+          {groups.map((g, i) => (
+            <div key={i} style={{ color: 'var(--t1)', fontFamily: "'Fira Code', monospace" }}>
+              <span style={{ fontWeight: 700, color: 'var(--brand)' }}>{g.markets.join('/')}</span> → {g.shoe} sizes · {g.unit} · <span style={{ color: 'var(--t2)' }}>{g.lang}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function GuidanceInfo({ storeId, initial }) {
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState(initial || '');
+  const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const has = (text || '').trim().length > 0;
+
+  async function save() {
+    setSaving(true); setSaved(false);
+    try { await api.patch(`/api/stores/${storeId}`, { listing_guidance: text }); setSaved(true); setTimeout(() => setSaved(false), 1500); }
+    catch (e) {} finally { setSaving(false); }
+  }
+
+  return (
+    <span style={{ position: 'relative', display: 'inline-flex' }}>
+      <button onClick={() => setOpen(o => !o)} title="Listing guidance for this store"
+        style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10.5, fontWeight: 700, color: has ? 'var(--gold)' : 'var(--t3)', background: has ? 'rgba(232,184,75,0.12)' : 'var(--s2)', border: '1px solid ' + (has ? 'rgba(232,184,75,0.35)' : 'var(--b2)'), borderRadius: 6, padding: '2px 8px', cursor: 'pointer' }}>
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2"/><path d="M12 11v5M12 8h.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
+        Info{has ? ' •' : ''}
+      </button>
+      {open && (
+        <div style={{ position: 'absolute', top: '110%', left: 0, zIndex: 30, width: 300, background: 'var(--s1)', border: '1px solid var(--b2)', borderRadius: 10, padding: 12, boxShadow: '0 8px 30px -8px rgba(0,0,0,0.4)' }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 }}>Listing guidance (saved on store)</div>
+          <textarea value={text} onChange={e => setText(e.target.value)} rows={4} placeholder="e.g. sizes run large — advise 1 size down; exclude Northern Ireland; avoid the word 'cheap'…"
+            style={{ width: '100%', boxSizing: 'border-box', fontSize: 11.5, padding: '8px 10px', borderRadius: 7, border: '1px solid var(--b2)', background: 'var(--s2)', color: 'var(--t1)', resize: 'vertical', fontFamily: 'inherit' }} />
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 8 }}>
+            <button onClick={() => setOpen(false)} style={{ fontSize: 11, fontWeight: 700, color: 'var(--t2)', background: 'var(--s2)', border: '1px solid var(--b2)', borderRadius: 6, padding: '5px 11px', cursor: 'pointer' }}>Close</button>
+            <button onClick={save} disabled={saving} style={{ fontSize: 11, fontWeight: 700, color: saved ? 'var(--green)' : '#fff', background: saved ? 'var(--green-bg)' : 'linear-gradient(135deg, #818CF8, #6366F1)', border: 'none', borderRadius: 6, padding: '5px 11px', cursor: 'pointer' }}>{saving ? 'Saving…' : saved ? '✓ Saved' : 'Save'}</button>
+          </div>
+        </div>
+      )}
+    </span>
+  );
+}
+
+function StoreVAControls({ batchId, bs, onProgress }) {
+  const [checked, setChecked] = useState(!!bs.va_checked);
+  const [checkedAt, setCheckedAt] = useState(bs.va_checked_at || null);
+  const [note, setNote] = useState(bs.va_note || '');
+  const [savingNote, setSavingNote] = useState(false);
+  const [noteSaved, setNoteSaved] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  async function toggle() {
+    const next = !checked;
+    setBusy(true);
+    try {
+      const r = await api.patch(`/api/batches/${batchId}/stores/${bs.id}/check`, { checked: next });
+      setChecked(r.store.va_checked);
+      setCheckedAt(r.store.va_checked_at);
+      if (r.progress && onProgress) onProgress(r.progress);
+    } catch (e) { /* keep UI state */ } finally { setBusy(false); }
+  }
+
+  async function saveNote() {
+    setSavingNote(true); setNoteSaved(false);
+    try { await api.patch(`/api/batches/${batchId}/stores/${bs.id}/note`, { note }); setNoteSaved(true); setTimeout(() => setNoteSaved(false), 1500); }
+    catch (e) { /* noop */ } finally { setSavingNote(false); }
+  }
+
+  return (
+    <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px dashed var(--b1)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <button onClick={toggle} disabled={busy}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 12, fontWeight: 700, color: checked ? '#fff' : 'var(--t2)', background: checked ? 'linear-gradient(135deg, #34D399, #10B981)' : 'var(--s2)', border: '1px solid ' + (checked ? 'transparent' : 'var(--b2)'), borderRadius: 8, padding: '7px 13px', cursor: busy ? 'default' : 'pointer' }}>
+          <span style={{ width: 16, height: 16, borderRadius: 4, border: '2px solid ' + (checked ? '#fff' : 'var(--t3)'), display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 11 }}>{checked ? '✓' : ''}</span>
+          {checked ? 'Checked by VA' : 'Mark as checked'}
+        </button>
+        {checked && checkedAt && (
+          <span style={{ fontSize: 10.5, color: 'var(--t3)', fontFamily: "'Fira Code', monospace" }}>
+            {new Date(checkedAt).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' })}
+          </span>
+        )}
+      </div>
+      <div style={{ marginTop: 10 }}>
+        <textarea value={note} onChange={e => setNote(e.target.value)} placeholder="VA note for this store (e.g. 12 products had image errors)…"
+          rows={2} style={{ width: '100%', boxSizing: 'border-box', fontSize: 11.5, padding: '8px 10px', borderRadius: 8, border: '1px solid var(--b2)', background: 'var(--s2)', color: 'var(--t1)', resize: 'vertical', fontFamily: 'inherit' }} />
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 6 }}>
+          <button onClick={saveNote} disabled={savingNote}
+            style={{ fontSize: 11, fontWeight: 700, color: noteSaved ? 'var(--green)' : 'var(--brand)', background: noteSaved ? 'var(--green-bg)' : 'var(--brand-l)', border: 'none', borderRadius: 6, padding: '5px 12px', cursor: 'pointer' }}>
+            {savingNote ? 'Saving…' : noteSaved ? '✓ Saved' : 'Save note'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function GoLivePanel({ batch }) {
+  const [date, setDate] = useState(batch.go_live_date || '');
+  const [auto, setAuto] = useState(batch.auto_publish !== false);
+  const [saved, setSaved] = useState(false);
+  const [preview, setPreview] = useState(null);
+  const [loadingPreview, setLoadingPreview] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+  const [publishResult, setPublishResult] = useState(null);
+  const published = !!batch.published_at;
+
+  async function save(nextDate, nextAuto) {
+    setSaved(false);
+    try { await api.patch(`/api/batches/${batch.id}`, { go_live_date: nextDate || null, auto_publish: nextAuto }); setSaved(true); setTimeout(() => setSaved(false), 1500); } catch (e) {}
+  }
+  async function loadPreview() {
+    setLoadingPreview(true);
+    try { setPreview(await api.get(`/api/batches/${batch.id}/publish-preview`)); } catch (e) { setPreview({ error: e.message }); } finally { setLoadingPreview(false); }
+  }
+  async function publishNow() {
+    if (!confirm('Publish all draft products with this batch\'s tag to LIVE now, across all stores?')) return;
+    setPublishing(true);
+    try { setPublishResult(await api.post(`/api/batches/${batch.id}/publish`, {})); } catch (e) { setPublishResult({ error: e.message }); } finally { setPublishing(false); }
+  }
+
+  return (
+    <div style={{ background: 'var(--s1)', border: '1px solid ' + (published ? 'rgba(16,185,129,0.4)' : 'var(--b1)'), borderRadius: 12, padding: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 12 }}>
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M5 12l5 5L20 7" stroke={published ? '#10B981' : 'var(--brand)'} strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"/></svg>
+        <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--t1)' }}>Go-live scheduling</span>
+        {published && <span style={{ fontSize: 10.5, fontWeight: 700, color: '#fff', background: '#10B981', borderRadius: 5, padding: '2px 8px' }}>Published {new Date(batch.published_at).toLocaleDateString(undefined, { day: '2-digit', month: 'short' })}</span>}
+      </div>
+
+      <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>Go-live date (all stores)</div>
+          <input type="date" value={date} onChange={e => { setDate(e.target.value); save(e.target.value, auto); }}
+            style={{ fontSize: 12, fontFamily: "'Fira Code', monospace", padding: '7px 10px', borderRadius: 7, background: 'var(--s2)', border: '1px solid var(--b2)', color: 'var(--t1)' }} />
+        </div>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer', fontSize: 12, color: 'var(--t1)', paddingBottom: 7 }}>
+          <input type="checkbox" checked={auto} onChange={e => { setAuto(e.target.checked); save(date, e.target.checked); }} style={{ width: 16, height: 16, cursor: 'pointer' }} />
+          Auto-publish on that date
+        </label>
+        {saved && <span style={{ fontSize: 10.5, color: 'var(--green)', paddingBottom: 9 }}>✓ Saved</span>}
+      </div>
+
+      {date && auto && !published && (
+        <div style={{ fontSize: 11, color: 'var(--t2)', marginTop: 10 }}>
+          BatchIQ will automatically set all draft products with this tag to live on <b style={{ color: 'var(--brand)' }}>{date}</b>, across every store in this batch.
+        </div>
+      )}
+
+      <div style={{ display: 'flex', gap: 8, marginTop: 14, flexWrap: 'wrap' }}>
+        <button onClick={loadPreview} disabled={loadingPreview}
+          style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--t2)', background: 'var(--s2)', border: '1px solid var(--b2)', borderRadius: 8, padding: '7px 13px', cursor: 'pointer' }}>
+          {loadingPreview ? 'Checking…' : 'Preview — how many will go live'}
+        </button>
+        <button onClick={publishNow} disabled={publishing}
+          style={{ fontSize: 11.5, fontWeight: 700, color: '#fff', background: 'linear-gradient(135deg, #34D399, #10B981)', border: 'none', borderRadius: 8, padding: '7px 13px', cursor: publishing ? 'default' : 'pointer', opacity: publishing ? 0.7 : 1 }}>
+          {publishing ? 'Publishing…' : 'Publish now'}
+        </button>
+      </div>
+
+      {preview && (
+        <div style={{ marginTop: 12, border: '1px solid var(--b1)', borderRadius: 9, overflow: 'hidden' }}>
+          {preview.error ? <div style={{ padding: 10, fontSize: 11, color: 'var(--red)' }}>{preview.error}</div> : (
+            <>
+              <div style={{ padding: '8px 12px', background: 'var(--s2)', fontSize: 11.5, fontWeight: 700, color: 'var(--t1)' }}>
+                {preview.total_draft} draft product(s) will go live across {preview.stores.length} store(s)
+              </div>
+              {preview.stores.map((s, i) => (
+                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '7px 12px', borderTop: '1px solid var(--b1)', fontSize: 11 }}>
+                  <span style={{ color: 'var(--t1)', fontWeight: 600 }}>{s.store}</span>
+                  <span style={{ fontFamily: "'Fira Code', monospace", color: s.error ? 'var(--amber)' : 'var(--t2)' }}>{s.error ? `⚠ ${s.error}` : `${s.draft_count} draft`}</span>
+                </div>
+              ))}
+            </>
+          )}
+        </div>
+      )}
+
+      {publishResult && (
+        <div style={{ marginTop: 12, border: '1px solid var(--b1)', borderRadius: 9, padding: 10, fontSize: 11.5 }}>
+          {publishResult.error ? <span style={{ color: 'var(--red)' }}>{publishResult.error}</span> : (
+            <>
+              <div style={{ fontWeight: 700, color: 'var(--green)', marginBottom: 5 }}>✓ Published {publishResult.total_published} product(s) live</div>
+              {(publishResult.results || []).map((r, i) => (
+                <div key={i} style={{ fontFamily: "'Fira Code', monospace", fontSize: 10.5, color: r.error ? 'var(--amber)' : 'var(--t2)' }}>
+                  {r.error ? `⚠ ${r.store}: ${r.error}` : `${r.store}: ${r.published} live${r.note ? ' — ' + r.note : ''}`}
+                </div>
+              ))}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function BatchRichContent({ batch, range, onRangeChange, onSyncStore, syncingStoreId }) {
   const [diag, setDiag] = useState(null);
   const [diagOpen, setDiagOpen] = useState(false);
   const [diagLoading, setDiagLoading] = useState(false);
+  const [pushing, setPushing] = useState(false);
+  const [pushResult, setPushResult] = useState(null);
+
+  // VA review state
+  const initialStores = batch?.biq_batch_stores || [];
+  const initialDone = initialStores.filter(s => s.va_checked).length;
+  const [vaProgress, setVaProgress] = useState({ done: initialDone, total: initialStores.length, all_checked: initialStores.length > 0 && initialDone === initialStores.length });
+  const [generalNote, setGeneralNote] = useState(batch?.va_general_note || '');
+  const [genSaved, setGenSaved] = useState(false);
+  const [summary, setSummary] = useState(batch?.va_note_summary || '');
+  const [summarizing, setSummarizing] = useState(false);
 
   if (!batch) return null;
+
+  async function saveGeneralNote() {
+    setGenSaved(false);
+    try { await api.patch(`/api/batches/${batch.id}/note`, { note: generalNote }); setGenSaved(true); setTimeout(() => setGenSaved(false), 1500); } catch (e) {}
+  }
+  async function summarizeNotes() {
+    setSummarizing(true);
+    try { const r = await api.post(`/api/batches/${batch.id}/summarize-notes`, {}); setSummary(r.summary || ''); } catch (e) { setSummary('Could not summarize: ' + e.message); } finally { setSummarizing(false); }
+  }
+
+  async function pushLabels() {
+    setPushing(true); setPushResult(null);
+    try { setPushResult(await api.post(`/api/google-ads/push-labels/${batch.id}`, {})); }
+    catch (e) { setPushResult({ label: '—', results: [{ store: 'Error', error: e.message }] }); }
+    finally { setPushing(false); }
+  }
 
   async function loadDiag() {
     setDiagOpen(o => !o);
@@ -160,14 +395,31 @@ export default function BatchRichContent({ batch, range, onRangeChange, onSyncSt
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      {/* Diagnostics toggle */}
-      <div>
+      {/* Diagnostics + Push labels toggle */}
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         <button onClick={loadDiag}
           style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 700, color: diagOpen ? '#fff' : 'var(--t2)', background: diagOpen ? 'var(--brand)' : 'var(--s2)', border: '1px solid var(--b2)', borderRadius: 8, padding: '6px 12px', cursor: 'pointer' }}>
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2"/><path d="M12 8v4M12 16h.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
           Diagnostics {diag && diag.total_issues != null ? `(${diag.total_issues} issues)` : ''}
         </button>
+        <button onClick={pushLabels} disabled={pushing}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 700, color: '#fff', background: 'linear-gradient(135deg, #34D399, #10B981)', border: 'none', borderRadius: 8, padding: '6px 12px', cursor: pushing ? 'default' : 'pointer', opacity: pushing ? 0.7 : 1 }}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M12 19V5M5 12l7-7 7 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+          {pushing ? 'Pushing labels…' : 'Push labels to Google'}
+        </button>
       </div>
+
+      {pushResult && (
+        <div style={{ background: 'var(--s1)', border: '1px solid var(--b2)', borderRadius: 10, padding: 12, fontSize: 11.5 }}>
+          <div style={{ fontWeight: 700, color: 'var(--t1)', marginBottom: 6 }}>Label push: {pushResult.label}</div>
+          {(pushResult.results || []).map((r, i) => (
+            <div key={i} style={{ marginBottom: 4, color: r.error ? 'var(--amber)' : 'var(--green)', fontFamily: "'Fira Code', monospace", fontSize: 10.5 }}>
+              {r.error ? `⚠ ${r.store}: ${r.error}` : `✓ ${r.store}: ${r.updated}/${r.matched_products} products labeled`}
+            </div>
+          ))}
+          <div style={{ fontSize: 10.5, color: 'var(--t3)', marginTop: 6 }}>Allow 24-48h for Google to process, then sync — spend will track by label.</div>
+        </div>
+      )}
 
       {diagOpen && (
         <div style={{ background: 'var(--s1)', border: '1px solid var(--b2)', borderRadius: 12, padding: 16 }}>
@@ -232,6 +484,68 @@ export default function BatchRichContent({ batch, range, onRangeChange, onSyncSt
         </div>
       )}
 
+      {/* VA review section: main (auto) checkmark + progress + notes */}
+      <div style={{ background: 'var(--s1)', border: '1px solid ' + (vaProgress.all_checked ? 'rgba(16,185,129,0.4)' : 'var(--b1)'), borderRadius: 12, padding: 16, boxShadow: vaProgress.all_checked ? '0 0 0 1px rgba(16,185,129,0.15)' : 'none' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 11 }}>
+            {/* Main checkmark — DISABLED, auto-driven by per-store checks */}
+            <span title="Auto-checks when every store is checked" style={{ width: 26, height: 26, borderRadius: 7, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 15, fontWeight: 800, color: vaProgress.all_checked ? '#fff' : 'var(--t3)', background: vaProgress.all_checked ? 'linear-gradient(135deg, #34D399, #10B981)' : 'var(--s3)', border: '2px solid ' + (vaProgress.all_checked ? 'transparent' : 'var(--b2)'), cursor: 'not-allowed', opacity: vaProgress.all_checked ? 1 : 0.85 }}>
+              {vaProgress.all_checked ? '✓' : ''}
+            </span>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--t1)' }}>{vaProgress.all_checked ? 'All stores checked' : 'Product check'}</div>
+              <div style={{ fontSize: 11, color: 'var(--t3)' }}>{vaProgress.all_checked ? 'Every store reviewed by a VA' : 'Main check completes automatically when all stores are checked'}</div>
+            </div>
+          </div>
+          {/* Progress badge X/Y done */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{ width: 90, height: 7, borderRadius: 4, background: 'var(--s3)', overflow: 'hidden' }}>
+              <div style={{ width: `${vaProgress.total ? (vaProgress.done / vaProgress.total) * 100 : 0}%`, height: '100%', background: vaProgress.all_checked ? '#10B981' : 'var(--brand)', transition: 'width 0.2s' }} />
+            </div>
+            <span style={{ fontSize: 13, fontWeight: 800, fontFamily: "'Fira Code', monospace", color: vaProgress.all_checked ? 'var(--green)' : 'var(--t1)' }}>{vaProgress.done}/{vaProgress.total} done</span>
+          </div>
+        </div>
+
+        {/* General note + AI summary */}
+        <div style={{ marginTop: 14, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div>
+            <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 5 }}>General note (whole batch)</div>
+            <textarea value={generalNote} onChange={e => setGeneralNote(e.target.value)} onBlur={saveGeneralNote} placeholder="Optional note that applies to the whole batch…"
+              rows={3} style={{ width: '100%', boxSizing: 'border-box', fontSize: 11.5, padding: '8px 10px', borderRadius: 8, border: '1px solid var(--b2)', background: 'var(--s2)', color: 'var(--t1)', resize: 'vertical', fontFamily: 'inherit' }} />
+            {genSaved && <div style={{ fontSize: 10, color: 'var(--green)', marginTop: 3 }}>✓ Saved</div>}
+          </div>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 5 }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>AI summary of store notes</div>
+              <button onClick={summarizeNotes} disabled={summarizing}
+                style={{ fontSize: 10.5, fontWeight: 700, color: '#fff', background: 'linear-gradient(135deg, #818CF8, #6366F1)', border: 'none', borderRadius: 6, padding: '4px 10px', cursor: summarizing ? 'default' : 'pointer', opacity: summarizing ? 0.7 : 1 }}>
+                {summarizing ? 'Summarizing…' : '✨ Summarize'}
+              </button>
+            </div>
+            <div style={{ fontSize: 11.5, padding: '8px 10px', borderRadius: 8, border: '1px solid var(--b2)', background: 'var(--s2)', color: summary ? 'var(--t1)' : 'var(--t3)', minHeight: 62, whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>
+              {summary || 'Click Summarize to combine all per-store notes into one overview.'}
+            </div>
+          </div>
+        </div>
+
+        {/* Scrollable per-store notes */}
+        {(batch.biq_batch_stores || []).some(s => s.va_note) && (
+          <div style={{ marginTop: 12 }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 5 }}>Per-store notes</div>
+            <div style={{ maxHeight: 130, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6, paddingRight: 4 }}>
+              {(batch.biq_batch_stores || []).filter(s => s.va_note).map(s => (
+                <div key={s.id} style={{ fontSize: 11, padding: '6px 9px', borderRadius: 7, background: 'var(--s2)', border: '1px solid var(--b1)' }}>
+                  <span style={{ fontWeight: 700, color: 'var(--brand)' }}>{s.biq_stores?.name}:</span> <span style={{ color: 'var(--t2)' }}>{s.va_note}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Go-live scheduling */}
+      <GoLivePanel batch={batch} />
+
       {/* Totals bar with range filter */}
       <div style={{ background: 'var(--s1)', border: '1px solid var(--b1)', borderRadius: 12, padding: 16 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
@@ -280,6 +594,7 @@ export default function BatchRichContent({ batch, range, onRangeChange, onSyncSt
                 <div style={{ display: 'flex', alignItems: 'center', gap: 9, flexWrap: 'wrap' }}>
                   <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--t1)' }}>{bs.biq_stores?.name || '—'}</span>
                   {hasOverlap && <Warn />}
+                  <GuidanceInfo storeId={bs.biq_stores?.id} initial={bs.biq_stores?.listing_guidance} />
                   {bs.shopify_tag && <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><TagChip tag={bs.shopify_tag} /><CopyBtn value={bs.shopify_tag} /></span>}
                 </div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10, alignItems: 'center' }}>
@@ -305,7 +620,11 @@ export default function BatchRichContent({ batch, range, onRangeChange, onSyncSt
               </div>
             </div>
 
+            <SizeWarning markets={markets} />
+
             <MarketDropdown markets={bs.marketRows || []} batchOverlap={batchOverlap} />
+
+            <StoreVAControls batchId={batch.id} bs={bs} onProgress={setVaProgress} />
 
             {onSyncStore && (
               <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 14 }}>

@@ -7,7 +7,7 @@ const router = express.Router();
 router.get('/', async (req, res) => {
   const { data, error } = await supabase
     .from('biq_config')
-    .select('shopify_client_id, app_url, shopify_client_secret')
+    .select('shopify_client_id, app_url, shopify_client_secret, batch_tag_match, batch_tag_pattern, batch_link_mode, auto_discover')
     .eq('id', 1)
     .single();
 
@@ -17,18 +17,26 @@ router.get('/', async (req, res) => {
     shopify_client_id: data?.shopify_client_id || '',
     app_url: data?.app_url || '',
     has_secret: !!data?.shopify_client_secret,
+    batch_tag_match: data?.batch_tag_match || 'contains',
+    batch_tag_pattern: data?.batch_tag_pattern || 'BATCH',
+    batch_link_mode: data?.batch_link_mode || 'per_store',
+    auto_discover: !!data?.auto_discover,
   });
 });
 
 // PATCH /api/config — save Shopify keys
 router.patch('/', async (req, res) => {
-  const { shopify_client_id, shopify_client_secret, app_url } = req.body;
+  const { shopify_client_id, shopify_client_secret, app_url, batch_tag_match, batch_tag_pattern, batch_link_mode, auto_discover } = req.body;
 
   const update = { updated_at: new Date().toISOString() };
   if (shopify_client_id !== undefined) update.shopify_client_id = shopify_client_id;
   if (app_url !== undefined) update.app_url = app_url;
   // Only update secret if a new non-empty one is provided
   if (shopify_client_secret) update.shopify_client_secret = shopify_client_secret;
+  if (batch_tag_match !== undefined) update.batch_tag_match = batch_tag_match;
+  if (batch_tag_pattern !== undefined) update.batch_tag_pattern = batch_tag_pattern;
+  if (batch_link_mode !== undefined) update.batch_link_mode = batch_link_mode;
+  if (auto_discover !== undefined) update.auto_discover = auto_discover;
 
   const { error } = await supabase
     .from('biq_config')
@@ -49,7 +57,7 @@ async function getConfig() {
   try {
     const { data, error } = await supabase
       .from('biq_config')
-      .select('shopify_client_id, shopify_client_secret, app_url, gads_client_id, gads_client_secret, gads_developer_token, gads_login_customer_id')
+      .select('shopify_client_id, shopify_client_secret, app_url, gads_client_id, gads_client_secret, gads_developer_token, gads_login_customer_id, batch_tag_match, batch_tag_pattern, batch_link_mode, auto_discover')
       .eq('id', 1)
       .single();
     if (error) throw error;

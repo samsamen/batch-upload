@@ -55,6 +55,98 @@ function TagChip({ tag }) {
   return <span style={{ display: 'inline-block', fontFamily: "'Fira Code', monospace", fontSize: 11, fontWeight: 600, color: 'var(--brand)', background: 'var(--brand-l)', border: '1px solid transparent', borderRadius: 5, padding: '2px 8px', whiteSpace: 'nowrap' }}>{tag}</span>;
 }
 
+function RunwayPanel() {
+  const [open, setOpen] = useState(false);
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [expandedStore, setExpandedStore] = useState(null);
+
+  useEffect(() => {
+    if (!open || data) return;
+    setLoading(true);
+    api.get('/api/stores/runway?target=7')
+      .then(setData).catch(() => setData({ stores: [], error: true }))
+      .finally(() => setLoading(false));
+  }, [open]);
+
+  const lowCount = data?.stores?.filter(s => s.runway_days < (data.target_days || 7)).length || 0;
+
+  return (
+    <div style={{ marginBottom: 18, border: '1px solid var(--b1)', borderRadius: 12, background: 'var(--s1)', overflow: 'hidden' }}>
+      <button onClick={() => setOpen(o => !o)}
+        style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', background: 'none', border: 'none', cursor: 'pointer' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+          <span style={{ transform: open ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s', color: 'var(--t3)' }}>▸</span>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M3 12h4l3 8 4-16 3 8h4" stroke="var(--brand)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+          <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--t1)' }}>Scheduling runway</span>
+          <span style={{ fontSize: 11, color: 'var(--t3)' }}>— batches queued per store</span>
+        </div>
+        {data && lowCount > 0 && <span style={{ fontSize: 10.5, fontWeight: 700, color: '#fff', background: 'var(--amber)', borderRadius: 5, padding: '2px 8px' }}>{lowCount} store{lowCount > 1 ? 's' : ''} low</span>}
+      </button>
+
+      {open && (
+        <div style={{ padding: '4px 16px 16px' }}>
+          {loading ? (
+            <div style={{ fontSize: 12, color: 'var(--t3)', fontFamily: "'Fira Code', monospace", padding: '8px 0' }}>Loading runway…</div>
+          ) : data?.error ? (
+            <div style={{ fontSize: 12, color: 'var(--red)' }}>Could not load runway.</div>
+          ) : (
+            <>
+              <div style={{ fontSize: 10.5, color: 'var(--t3)', marginBottom: 10 }}>Target: {data.target_days} days of scheduled batches. Stores sorted by lowest runway first — add batches where the bar is short.</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {data.stores.map(s => {
+                  const isOpen = expandedStore === s.store_id;
+                  const low = s.runway_days < data.target_days;
+                  const barColor = s.runway_days === 0 ? 'var(--red)' : low ? 'var(--amber)' : 'var(--green)';
+                  return (
+                    <div key={s.store_id} style={{ border: '1px solid var(--b1)', borderRadius: 9, overflow: 'hidden' }}>
+                      <div onClick={() => setExpandedStore(isOpen ? null : s.store_id)}
+                        style={{ display: 'grid', gridTemplateColumns: '1.3fr 2fr auto', gap: 12, alignItems: 'center', padding: '9px 12px', cursor: 'pointer', background: 'var(--s1)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
+                          <span style={{ transform: isOpen ? 'rotate(90deg)' : 'none', transition: 'transform 0.15s', color: 'var(--t3)', fontSize: 11 }}>▸</span>
+                          <span style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--t1)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.store}</span>
+                          {s.overdue_count > 0 && <span style={{ fontSize: 9.5, fontWeight: 700, color: '#fff', background: 'var(--red)', borderRadius: 4, padding: '1px 6px' }}>{s.overdue_count} overdue</span>}
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+                          <div style={{ flex: 1, height: 8, borderRadius: 5, background: 'var(--s3)', overflow: 'hidden' }}>
+                            <div style={{ width: `${s.runway_pct}%`, height: '100%', background: barColor, transition: 'width 0.3s' }} />
+                          </div>
+                          <span style={{ fontSize: 11.5, fontWeight: 800, fontFamily: "'Fira Code', monospace", color: barColor, minWidth: 54, textAlign: 'right' }}>{s.runway_days}d ready</span>
+                        </div>
+                        <div style={{ fontSize: 10.5, color: 'var(--t3)', fontFamily: "'Fira Code', monospace", whiteSpace: 'nowrap' }}>
+                          {s.scheduled_count} sched · {s.unscheduled} draft
+                        </div>
+                      </div>
+                      {isOpen && (
+                        <div style={{ borderTop: '1px solid var(--b1)', padding: '8px 12px', background: 'var(--s2)' }}>
+                          {s.upcoming.length === 0 && s.unscheduled === 0 ? (
+                            <div style={{ fontSize: 11, color: 'var(--amber)' }}>⚠ Nothing queued — add a batch for this store.</div>
+                          ) : (
+                            <>
+                              {s.upcoming.map((u, i) => (
+                                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '3px 0', fontSize: 11 }}>
+                                  <span style={{ color: 'var(--t1)' }}>{u.name}</span>
+                                  <span style={{ fontFamily: "'Fira Code', monospace", color: u.overdue ? 'var(--red)' : 'var(--t2)' }}>{u.overdue ? `overdue ${u.date}` : u.date}</span>
+                                </div>
+                              ))}
+                              {s.unscheduled > 0 && <div style={{ fontSize: 10.5, color: 'var(--t3)', marginTop: 4 }}>+ {s.unscheduled} batch(es) linked but no go-live date set</div>}
+                            </>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+                {data.stores.length === 0 && <div style={{ fontSize: 11.5, color: 'var(--t3)' }}>No active stores with batches yet.</div>}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CopyButton({ value }) {
   const [done, setDone] = useState(false);
   return (
@@ -595,12 +687,172 @@ function MetaLine({ label, value }) {
 }
 
 // ═══ Dashboard ════════════════════════════════════════════════════════════════
+function DiscoverModal({ onClose, onCreated }) {
+  const [match, setMatch] = useState('contains');
+  const [pattern, setPattern] = useState('BATCH');
+  const [mode, setMode] = useState('per_store');
+  const [autoDiscover, setAutoDiscover] = useState(false);
+  const [scan, setScan] = useState(null);
+  const [scanning, setScanning] = useState(false);
+  const [selected, setSelected] = useState({});
+  const [creating, setCreating] = useState(false);
+  const [savedRule, setSavedRule] = useState(false);
+
+  useEffect(() => {
+    api.get('/api/config').then(c => {
+      setMatch(c.batch_tag_match || 'contains');
+      setPattern(c.batch_tag_pattern || 'BATCH');
+      setMode(c.batch_link_mode || 'per_store');
+      setAutoDiscover(!!c.auto_discover);
+    }).catch(() => {});
+  }, []);
+
+  async function saveRule() {
+    setSavedRule(false);
+    try { await api.patch('/api/config', { batch_tag_match: match, batch_tag_pattern: pattern, batch_link_mode: mode, auto_discover: autoDiscover }); setSavedRule(true); setTimeout(() => setSavedRule(false), 1400); } catch (e) {}
+  }
+  async function runScan() {
+    await saveRule();
+    setScanning(true); setScan(null); setSelected({});
+    try {
+      const r = await api.get('/api/batches/discover/scan');
+      setScan(r);
+      const pre = {};
+      if (mode === 'per_store') (r.proposals_per_store || []).forEach(p => { if (!p.already_exists) pre[`${p.tag}|${p.store_id}`] = true; });
+      else (r.proposals || []).forEach(p => { if (!p.already_exists) pre[p.tag] = true; });
+      setSelected(pre);
+    } catch (e) { setScan({ error: e.message }); } finally { setScanning(false); }
+  }
+  async function createSelected() {
+    setCreating(true);
+    try {
+      if (mode === 'per_store') {
+        const items = (scan?.proposals_per_store || [])
+          .filter(p => selected[`${p.tag}|${p.store_id}`])
+          .map(p => ({ tag: p.tag, store_id: p.store_id }));
+        if (items.length === 0) return;
+        await api.post('/api/batches/discover/create', { mode: 'per_store', items });
+      } else {
+        const tags = Object.keys(selected).filter(t => selected[t]);
+        if (tags.length === 0) return;
+        await api.post('/api/batches/discover/create', { mode: 'grouped', tags });
+      }
+      onCreated && await onCreated(); onClose();
+    } catch (e) { alert(e.message); } finally { setCreating(false); }
+  }
+
+  const perStoreList = scan?.proposals_per_store || [];
+  const groupedList = scan?.proposals || [];
+  const selCount = Object.values(selected).filter(Boolean).length;
+
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 20 }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: 'var(--s1)', borderRadius: 16, width: '100%', maxWidth: 640, maxHeight: '88vh', overflow: 'auto', border: '1px solid var(--b2)' }}>
+        <div style={{ padding: '18px 22px', borderBottom: '1px solid var(--b1)' }}>
+          <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--t1)' }}>Discover batches from Shopify tags</div>
+          <div style={{ fontSize: 12, color: 'var(--t2)', marginTop: 3 }}>Set the rule, scan all stores, pick what to create. Manual creation via New Batch stays available.</div>
+        </div>
+
+        <div style={{ padding: 22 }}>
+          {/* Rule config */}
+          <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>Detection rule</div>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 12.5, color: 'var(--t1)' }}>A tag is a batch if it</span>
+            <select value={match} onChange={e => setMatch(e.target.value)}
+              style={{ fontSize: 12.5, padding: '7px 10px', borderRadius: 7, background: 'var(--s2)', border: '1px solid var(--b2)', color: 'var(--t1)', cursor: 'pointer' }}>
+              <option value="startswith">starts with</option>
+              <option value="contains">contains</option>
+              <option value="exact">is exactly</option>
+            </select>
+            <input value={pattern} onChange={e => setPattern(e.target.value)} placeholder="BATCH"
+              style={{ fontSize: 12.5, fontFamily: "'Fira Code', monospace", padding: '7px 10px', borderRadius: 7, background: 'var(--s2)', border: '1px solid var(--b2)', color: 'var(--t1)', width: 170 }} />
+            {savedRule && <span style={{ fontSize: 10.5, color: 'var(--green)' }}>✓ Saved</span>}
+          </div>
+          <div style={{ fontSize: 10.5, color: 'var(--t3)', marginTop: 5 }}>Multiple words allowed, comma-separated (e.g. <span style={{ fontFamily: "'Fira Code', monospace" }}>BATCH, PARTIJ</span>). Use <span style={{ fontFamily: "'Fira Code', monospace" }}>*</span> to match ALL tags on all stores.</div>
+
+          {/* Mode */}
+          <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '14px 0 8px' }}>Batch creation mode</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: 9, cursor: 'pointer', fontSize: 12.5, color: 'var(--t1)' }}>
+              <input type="radio" checked={mode === 'per_store'} onChange={() => setMode('per_store')} style={{ marginTop: 2 }} />
+              <span><b>Per store</b> — every store+tag becomes its own batch (e.g. "BATCH4 — VIVANO LONDON"). <span style={{ color: 'var(--t3)' }}>Recommended.</span></span>
+            </label>
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: 9, cursor: 'pointer', fontSize: 12.5, color: 'var(--t1)' }}>
+              <input type="radio" checked={mode === 'grouped'} onChange={() => setMode('grouped')} style={{ marginTop: 2 }} />
+              <span><b>Grouped</b> — the same tag across multiple stores becomes ONE batch covering them all.</span>
+            </label>
+          </div>
+
+          {/* Daily automation */}
+          <div style={{ marginTop: 14, padding: '10px 13px', borderRadius: 9, background: 'var(--s2)', border: '1px solid var(--b1)' }}>
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: 9, cursor: 'pointer', fontSize: 12.5, color: 'var(--t1)' }}>
+              <input type="checkbox" checked={autoDiscover} onChange={async e => { const v = e.target.checked; setAutoDiscover(v); try { await api.patch('/api/config', { batch_tag_match: match, batch_tag_pattern: pattern, batch_link_mode: mode, auto_discover: v }); } catch (err) {} }} style={{ width: 16, height: 16, marginTop: 1 }} />
+              <span><b>Auto-discover daily</b> — every morning (05:30) BatchIQ scans all stores with this rule, creates any new batches it finds, links them, and immediately syncs so product counts + performance fill in automatically.</span>
+            </label>
+          </div>
+
+          <div style={{ marginTop: 16 }}>
+            <Btn onClick={runScan} loading={scanning} variant="primary">{scanning ? 'Scanning all stores…' : 'Scan stores for batches'}</Btn>
+          </div>
+
+          {/* Results */}
+          {scan && !scan.error && (
+            <div style={{ marginTop: 18 }}>
+              <div style={{ fontSize: 12, color: 'var(--t2)', marginBottom: 8 }}>
+                {mode === 'per_store'
+                  ? `Found ${perStoreList.length} store+tag combination(s).`
+                  : `Found ${groupedList.length} matching tag(s).`}
+              </div>
+              <div style={{ border: '1px solid var(--b1)', borderRadius: 10, overflow: 'hidden', maxHeight: 300, overflowY: 'auto' }}>
+                {mode === 'per_store' ? (
+                  perStoreList.length === 0 ? (
+                    <div style={{ padding: 14, fontSize: 12, color: 'var(--t3)' }}>No matching tags found. Adjust the rule and scan again.</div>
+                  ) : perStoreList.map((p, i) => {
+                    const k = `${p.tag}|${p.store_id}`;
+                    return (
+                      <label key={k} style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '10px 13px', borderTop: i > 0 ? '1px solid var(--b1)' : 'none', cursor: p.already_exists ? 'default' : 'pointer', opacity: p.already_exists ? 0.55 : 1 }}>
+                        <input type="checkbox" disabled={p.already_exists} checked={!!selected[k]} onChange={e => setSelected(s => ({ ...s, [k]: e.target.checked }))} style={{ width: 16, height: 16 }} />
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--t1)', fontFamily: "'Fira Code', monospace" }}>{p.tag} <span style={{ color: 'var(--t3)' }}>—</span> {p.store} {p.already_exists && <span style={{ fontSize: 10, color: 'var(--t3)', fontFamily: 'inherit' }}>(already a batch)</span>}</div>
+                        </div>
+                      </label>
+                    );
+                  })
+                ) : (
+                  groupedList.length === 0 ? (
+                    <div style={{ padding: 14, fontSize: 12, color: 'var(--t3)' }}>No matching tags found. Adjust the rule and scan again.</div>
+                  ) : groupedList.map((p, i) => (
+                    <label key={p.tag} style={{ display: 'flex', alignItems: 'center', gap: 11, padding: '10px 13px', borderTop: i > 0 ? '1px solid var(--b1)' : 'none', cursor: p.already_exists ? 'default' : 'pointer', opacity: p.already_exists ? 0.55 : 1 }}>
+                      <input type="checkbox" disabled={p.already_exists} checked={!!selected[p.tag]} onChange={e => setSelected(s => ({ ...s, [p.tag]: e.target.checked }))} style={{ width: 16, height: 16 }} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--t1)', fontFamily: "'Fira Code', monospace" }}>{p.tag} {p.already_exists && <span style={{ fontSize: 10, color: 'var(--t3)', fontFamily: 'inherit' }}>(already a batch)</span>}</div>
+                        <div style={{ fontSize: 10.5, color: 'var(--t3)' }}>{p.stores.length} store(s): {p.stores.map(s => s.store).join(', ')}</div>
+                      </div>
+                    </label>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+          {scan?.error && <div style={{ marginTop: 14, fontSize: 12, color: 'var(--red)' }}>{scan.error}</div>}
+        </div>
+
+        <div style={{ padding: '14px 22px', borderTop: '1px solid var(--b1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <Btn onClick={onClose} variant="ghost">Cancel</Btn>
+          <Btn onClick={createSelected} loading={creating} variant="primary" disabled={selCount === 0}>{creating ? 'Creating…' : `Create ${selCount} batch${selCount === 1 ? '' : 'es'} + link`}</Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const navigate = useNavigate();
   const [batches, setBatches] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [showCreate, setShowCreate] = useState(false);
+  const [showDiscover, setShowDiscover] = useState(false);
   const [editBatch, setEditBatch] = useState(null);
   const [syncing, setSyncing] = useState(false);
   const [filter, setFilter] = useState('active');
@@ -700,6 +952,7 @@ export default function Dashboard() {
           </div>
           <div style={{ display: 'flex', gap: 9 }}>
             <Btn onClick={handleSync} loading={syncing} variant="ghost">{syncing ? 'Syncing…' : 'Sync all'}</Btn>
+            <Btn onClick={() => setShowDiscover(true)} variant="ghost">Discover batches</Btn>
             <Btn onClick={() => setShowCreate(true)} variant="primary">
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 2.5v9M2.5 7h9" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
               New Batch
@@ -719,6 +972,8 @@ export default function Dashboard() {
           <StatCard label="Blended ROAS" value={blendedRoas ? `${blendedRoas.toFixed(2)}×` : '—'} accent="var(--c-amber)" mono
             icon={<svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M3 14l4-4 3 3 6-7" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/><path d="M12 6h4v4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/></svg>} />
         </div>
+
+        <RunwayPanel />
 
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12, marginBottom: 16 }}>
           <div style={{ display: 'flex', gap: 3, padding: 3, background: 'var(--s2)', borderRadius: 10, border: '1px solid var(--b1)' }}>
@@ -809,6 +1064,7 @@ export default function Dashboard() {
       </div>
 
       {showCreate && <BatchModal mode="create" onClose={() => setShowCreate(false)} onSaved={(b) => setBatches(p => [{ ...b, totals: { orders: 0, revenue: 0, units: 0 }, store_count: 0 }, ...p])} />}
+      {showDiscover && <DiscoverModal onClose={() => setShowDiscover(false)} onCreated={load} />}
       {editBatch && <BatchModal mode="edit" batch={editBatch} onClose={() => setEditBatch(null)} onSaved={(b) => setBatches(p => p.map(x => x.id === b.id ? { ...x, ...b } : x))} />}
     </div>
   );

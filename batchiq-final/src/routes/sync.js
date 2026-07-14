@@ -11,7 +11,69 @@ const { makeConverter } = require('../lib/currency');
 const router = express.Router();
 
 // ── Fetch + store Google Ads spend per market for a batch_store ────────────
-async function syncAdSpend(bsId, store, productIds, fromDate, toDate, marketRevByDate) {
+// Write spend that came from the custom-label query. If Google returned per-geo
+// rows (geo_combined), use them directly = REAL per-country spend. Otherwise split
+// the label total across markets by revenue share (same fallback as product path).
+async function writeLabelSpend(bsId, store, labelResult, fromDate, toDate, marketRevByDate) {
+  const cfg = await getConfig();
+  let token;
+  try { token = await gads.getAccessToken(cfg.gads_client_id, cfg.gads_client_secret, store.gads_refresh_token); }
+  catch { token = null; }
+  let adCur = store.currency || 'EUR';
+  if (token) { try { adCur = await gads.getAccountCurrency(cfg.gads_login_customer_id ? cfg : { ...cfg, gads_login_customer_id: null }, token, store.gads_customer_id); } catch {} }
+  const adToEur = await makeConverter(adCur || 'EUR');
+
+  const agg = {}; // date|market -> metrics
+  const add = (date, market, cost, conv, convVal, clicks, impr) => {
+    const k = `${date}|${market}`;
+    if (!agg[k]) agg[k] = { date, market, cost: 0, conversions: 0, conversion_value: 0, clicks: 0, impressions: 0 };
+    agg[k].cost += cost; agg[k].conversions += conv; agg[k].conversion_value += convVal;
+    agg[k].clicks += clicks; agg[k].impressions += impr;
+  };
+
+  if (labelResult.geo_combined) {
+    // Real per-country rows
+    for (const r of labelResult.rows) {
+      const market = geoConstantToCode(r.geoConstant) || 'ALL';
+      add(r.date, market, adToEur(r.cost), r.conversions, adToEur(r.conversionValue), r.clicks, r.impressions);
+    }
+  } else {
+    // Label-total per date → split by revenue markets
+    const byDate = {};
+    for (const r of labelResult.rows) {
+      if (!byDate[r.date]) byDate[r.date] = { cost: 0, conversions: 0, conversion_value: 0, clicks: 0, impressions: 0 };
+      byDate[r.date].cost += adToEur(r.cost);
+      byDate[r.date].conversions += r.conversions;
+      byDate[r.date].conversion_value += adToEur(r.conversionValue);
+      byDate[r.date].clicks += r.clicks;
+      byDate[r.date].impressions += r.impressions;
+    }
+    for (const [date, p] of Object.entries(byDate)) {
+      const rev = marketRevByDate && marketRevByDate[date];
+      let splits = [{ market: 'ALL', frac: 1 }];
+      if (rev) {
+        const total = Object.values(rev).reduce((s, v) => s + v, 0);
+        if (total > 0) splits = Object.entries(rev).map(([m, v]) => ({ market: m, frac: v / total }));
+      }
+      for (const { market, frac } of splits) {
+        add(date, market, p.cost * frac, p.conversions * frac, p.conversion_value * frac, Math.round(p.clicks * frac), Math.round(p.impressions * frac));
+      }
+    }
+  }
+
+  // Clear stale rows in range, then write fresh
+  await supabase.from('biq_ad_spend_daily').delete().eq('batch_store_id', bsId).gte('date', fromDate).lte('date', toDate).then(() => {}, () => {});
+  const upserts = Object.values(agg).map(a => ({ batch_store_id: bsId, ...a, synced_at: new Date().toISOString() }));
+  let totalSpend = 0; const marketSet = new Set();
+  if (upserts.length > 0) {
+    for (const u of upserts) { totalSpend += u.cost; marketSet.add(u.market); }
+    const { error } = await supabase.from('biq_ad_spend_daily').upsert(upserts, { onConflict: 'batch_store_id,date,market' });
+    if (error) await logActivity('ads', 'warning', `${store.name}: label spend store failed`, { error: error.message });
+  }
+  return { spend: totalSpend, markets: marketSet.size };
+}
+
+async function syncAdSpend(bsId, store, productIds, fromDate, toDate, marketRevByDate, labelInfo) {
   const cfg = await getConfig();
   // Per-store refresh token + per-store customer id are both required
   if (!store.gads_refresh_token || !store.gads_customer_id) return { spend: 0, markets: 0 };
@@ -26,11 +88,33 @@ async function syncAdSpend(bsId, store, productIds, fromDate, toDate, marketRevB
     return { spend: 0, markets: 0 };
   }
 
+  const queryCfg = cfg.gads_login_customer_id ? cfg : { ...cfg, gads_login_customer_id: null };
+
+  // ── PREFERRED PATH: custom-label query (exact spend, can combine with geo) ──
+  // Used when this batch has a label pushed to the feed. Falls back to product-ID
+  // matching if the label query returns nothing.
+  if (labelInfo && labelInfo.value) {
+    try {
+      const lr = await gads.getSpendByCustomLabelGeo(queryCfg, token, store.gads_customer_id, labelInfo.index ?? 4, labelInfo.value, fromDate, toDate);
+      if (lr.rows && lr.rows.length > 0) {
+        await supabase.from('biq_stores').update({ gads_ok: true, gads_checked_at: new Date().toISOString() }).eq('id', store.id).then(() => {}, () => {});
+        const written = await writeLabelSpend(bsId, store, lr, fromDate, toDate, marketRevByDate);
+        await logActivity('ads', 'info',
+          `${store.name}: spend via custom label "${labelInfo.value}" — €${written.spend.toFixed(2)}, ${written.markets} market(s)${lr.geo_combined ? ' (real per-country)' : ' (label total, geo split by revenue)'}`,
+          { geo_combined: lr.geo_combined });
+        return written;
+      }
+      // label returned nothing → fall through to product-ID matching
+      await logActivity('ads', 'info', `${store.name}: custom label "${labelInfo.value}" returned no spend yet (feed may still be propagating) — using product-ID matching`, {});
+    } catch (err) {
+      await logActivity('ads', 'warning', `${store.name}: custom-label spend query failed — falling back to product matching`, { error: err.message });
+    }
+  }
+
   let rows, diag;
   try {
     // Individual mode: when no MCC is configured, query the account as itself
     // (no login-customer-id header). With an MCC, keep using it.
-    const queryCfg = cfg.gads_login_customer_id ? cfg : { ...cfg, gads_login_customer_id: null };
     const result = await gads.getSpendByProductAndGeo(queryCfg, token, store.gads_customer_id, productIds, fromDate, toDate);
     rows = result.rows; diag = result.diag;
     // Query succeeded → Google Ads integration is live & healthy
@@ -57,8 +141,6 @@ async function syncAdSpend(bsId, store, productIds, fromDate, toDate, marketRevB
   let adCur = null;
   try { adCur = await gads.getAccountCurrency(cfg.gads_login_customer_id ? cfg : { ...cfg, gads_login_customer_id: null }, token, store.gads_customer_id); } catch {}
   const adToEur = await makeConverter(adCur || store.currency || 'EUR');
-
-  const queryCfg = cfg.gads_login_customer_id ? cfg : { ...cfg, gads_login_customer_id: null };
 
   // rows = product-level spend (this batch's products), per date. No geo in this view.
   // To get per-market spend, fetch the account's geo split per date and apportion
@@ -154,6 +236,12 @@ async function syncAdSpend(bsId, store, productIds, fromDate, toDate, marketRevB
 async function syncBatchStore(batchStore, fromDate, toDate) {
   const store = batchStore.biq_stores;
   const { id: bsId } = batchStore;
+  const batchMeta = batchStore.biq_batches || {};
+
+  // If this batch has a custom label pushed to the feed, prefer label-based spend.
+  const labelInfo = batchMeta.gads_label_value
+    ? { index: batchMeta.gads_label_index ?? 4, value: batchMeta.gads_label_value }
+    : null;
 
   // KEY FIX: tag priority is sub-tag → batch_tag → batch NAME (the name IS the tag on the products)
   const effectiveTag = (batchStore.shopify_tag && batchStore.shopify_tag.trim())
@@ -288,7 +376,7 @@ async function syncBatchStore(batchStore, fromDate, toDate) {
   // 6. Google Ads spend per market (only if this store has an account + GAds is connected)
   let adResult = { spend: 0, markets: 0 };
   try {
-    adResult = await syncAdSpend(bsId, store, productIds, fromDate, toDate, marketRevByDate);
+    adResult = await syncAdSpend(bsId, store, productIds, fromDate, toDate, marketRevByDate, labelInfo);
   } catch (err) {
     await logActivity('ads', 'warning', `${storeName}: ad spend sync error`, { error: err.message });
   }
@@ -316,7 +404,7 @@ async function syncAll(days = 1) {
     .select(`
       id, shopify_tag,
       biq_stores ( id, shop_domain, name, access_token, active, client_id, client_secret, gads_customer_id, gads_refresh_token ),
-      biq_batches ( status, batch_tag, name )
+      biq_batches ( status, batch_tag, name, gads_label_index, gads_label_value, labels_pushed_at )
     `);
 
   if (error) {
@@ -373,7 +461,7 @@ router.post('/batch/:batchId', async (req, res) => {
 
   const { data: batchStores, error } = await supabase
     .from('biq_batch_stores')
-    .select(`id, shopify_tag, biq_stores ( id, shop_domain, name, access_token, active, client_id, client_secret, gads_customer_id, gads_refresh_token ), biq_batches ( status, batch_tag, name )`)
+    .select(`id, shopify_tag, biq_stores ( id, shop_domain, name, access_token, active, client_id, client_secret, gads_customer_id, gads_refresh_token ), biq_batches ( status, batch_tag, name, gads_label_index, gads_label_value, labels_pushed_at )`)
     .eq('batch_id', req.params.batchId);
 
   if (error) return res.status(500).json({ error: error.message });
@@ -420,7 +508,7 @@ async function syncStoreNow(storeId, days = 30) {
   // Sync performance for every batch linked to this store
   const { data: batchStores } = await supabase
     .from('biq_batch_stores')
-    .select(`id, shopify_tag, biq_stores ( id, shop_domain, name, access_token, active, client_id, client_secret, gads_customer_id, gads_refresh_token ), biq_batches ( status, batch_tag, name )`)
+    .select(`id, shopify_tag, biq_stores ( id, shop_domain, name, access_token, active, client_id, client_secret, gads_customer_id, gads_refresh_token ), biq_batches ( status, batch_tag, name, gads_label_index, gads_label_value, labels_pushed_at )`)
     .eq('store_id', storeId);
 
   let totalDays = 0; const errors = [];

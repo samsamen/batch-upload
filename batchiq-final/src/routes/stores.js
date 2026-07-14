@@ -8,8 +8,8 @@ const router = express.Router();
 
 // GET /api/stores — list stores. ?include=all also returns disconnected ones.
 router.get('/', async (req, res) => {
-  const full = 'id, shop_domain, name, country, currency, markets, active, connected_at, gads_customer_id, gads_refresh_token, access_token, client_id, shopify_ok, gads_ok';
-  const base = 'id, shop_domain, name, country, currency, markets, active, connected_at, access_token, client_id';
+  const full = 'id, shop_domain, name, country, currency, markets, active, connected_at, gads_customer_id, gads_refresh_token, access_token, client_id, shopify_ok, gads_ok, merchant_id, mc_supplemental_feed_id, content_api_ok';
+  const base = 'id, shop_domain, name, country, currency, markets, active, connected_at, access_token, client_id, merchant_id, mc_supplemental_feed_id';
 
   async function run(cols) {
     let q = supabase.from('biq_stores').select(cols).order('name');
@@ -110,12 +110,15 @@ router.post('/connect', async (req, res) => {
 
 // PATCH /api/stores/:id
 router.patch('/:id', async (req, res) => {
-  let { name, country, currency, markets, client_id, client_secret, shop_domain } = req.body;
+  let { name, country, currency, markets, client_id, client_secret, shop_domain, merchant_id, mc_supplemental_feed_id, listing_guidance } = req.body;
   const update = {};
   if (name !== undefined) update.name = name;
   if (country !== undefined) update.country = country;
   if (currency !== undefined) update.currency = currency;
   if (markets !== undefined) update.markets = markets;
+  if (merchant_id !== undefined) update.merchant_id = merchant_id;
+  if (mc_supplemental_feed_id !== undefined) update.mc_supplemental_feed_id = mc_supplemental_feed_id;
+  if (listing_guidance !== undefined) update.listing_guidance = listing_guidance;
 
   // Save app credentials ON THIS STORE (each store has its own app)
   if (client_id) update.client_id = client_id.trim();
@@ -213,6 +216,59 @@ router.delete('/:id', async (req, res) => {
     .from('biq_stores').update({ active: false }).eq('id', req.params.id);
   if (error) return res.status(500).json({ error: error.message });
   res.json({ success: true });
+});
+
+// GET /api/stores/runway — per-store scheduling runway: how many upcoming
+// scheduled batches each store has, how many days ahead they're covered, and
+// how many batches are ready but not yet scheduled. Lets you see where to add.
+router.get('/runway', async (req, res) => {
+  const target = parseInt(req.query.target) || 7; // target days of runway
+  const today = new Date().toISOString().slice(0, 10);
+
+  const { data: links, error } = await supabase.from('biq_batch_stores')
+    .select(`id, published_at,
+      biq_stores ( id, name, active ),
+      biq_batches ( id, name, go_live_date, published_at, status )`);
+  if (error) return res.status(500).json({ error: error.message });
+
+  const byStore = {};
+  for (const l of links || []) {
+    const st = l.biq_stores; const b = l.biq_batches;
+    if (!st || !b) continue;
+    if (st.active === false) continue;
+    if (!byStore[st.id]) byStore[st.id] = { store_id: st.id, store: st.name, upcoming: [], unscheduled: 0, live_count: 0 };
+    const grp = byStore[st.id];
+
+    const isPublished = !!l.published_at || !!b.published_at;
+    if (isPublished) { grp.live_count++; continue; }
+    if (b.status === 'archived') continue;
+
+    if (b.go_live_date) {
+      if (b.go_live_date >= today) grp.upcoming.push({ batch_id: b.id, name: b.name, date: b.go_live_date });
+      // past-dated but unpublished = overdue; surface as upcoming with overdue flag
+      else grp.upcoming.push({ batch_id: b.id, name: b.name, date: b.go_live_date, overdue: true });
+    } else {
+      grp.unscheduled++;
+    }
+  }
+
+  const stores = Object.values(byStore).map(g => {
+    g.upcoming.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+    const futureDates = [...new Set(g.upcoming.filter(u => !u.overdue).map(u => u.date))];
+    const furthest = futureDates.length ? futureDates[futureDates.length - 1] : null;
+    const runwayDays = furthest ? Math.max(0, Math.round((new Date(furthest) - new Date(today)) / 86400000)) + 1 : 0;
+    return {
+      ...g,
+      scheduled_count: g.upcoming.filter(u => !u.overdue).length,
+      overdue_count: g.upcoming.filter(u => u.overdue).length,
+      distinct_days: futureDates.length,
+      furthest_date: furthest,
+      runway_days: runwayDays,
+      runway_pct: Math.min(100, Math.round((runwayDays / target) * 100)),
+    };
+  }).sort((a, b) => a.runway_days - b.runway_days); // lowest runway first (needs attention)
+
+  res.json({ target_days: target, today, stores });
 });
 
 module.exports = router;
